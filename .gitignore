@@ -1,0 +1,62 @@
+.DS_Store
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
+
+# virtualenv
+.env/
+.venv/
+venv/
+ENV/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+*.ipynb~
+
+# ===========================
+# Project
+# ===========================
+# FAISS index files
+*.index
+*.faiss
+
+# BM25 / sparse files
+*.bm25
+
+# Graph store
+*.graph
+*.jsonl.tmp
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache
+cache/
+
+# PDFs temp
+*.pdf.out
+
+# Generated data
+data/
+datasets/
+
+# Temporary build outputs
+build/
+dist/
+*.egg-info/
+
+# ===========================
+# misc
+# ===========================
+*.swp
+*.swo
+*~
