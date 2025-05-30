@@ -8,11 +8,69 @@ from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
- 
+
+
+class PathsConfig(BaseModel):
+    base_dir: str = str(BASE_DIR)
+    data_dir: str = str(DATA_DIR)
+
+    raw_dir: str = str(DATA_DIR / "raw")
+    processed_dir: str = str(DATA_DIR / "processed")
+    index_dir: str = str(DATA_DIR / "index")
+    eval_dir: str = str(DATA_DIR / "eval")
+    upload_dir: str = str(DATA_DIR / "uploads")
+    graph_dir: str = str(DATA_DIR / "graph")
+
+    contract_law_raw: str = str(DATA_DIR / "raw" / "minfadian_hetongbian.txt")
+    contract_law_jsonl: str = str(DATA_DIR / "processed" / "contract_law.jsonl")
+    law_graph_jsonl: str = str(DATA_DIR / "graph" / "law_graph.jsonl")
+    legal_kg_jsonl: str = str(DATA_DIR / "graph" / "legal_kg.jsonl")
+
+
+class LLMConfig(BaseModel):
+    provider: str = "qwen-local"   # "qwen-local" | "openai"
+    model: str = "Qwen/Qwen2-1.5B-Instruct"
+    api_key_env: str = "OPENAI_API_KEY"
+    base_url_env: str = "OPENAI_BASE_URL"
+    max_context_tokens: int = 4096
+
+
+class RetrievalConfig(BaseModel):
+    processed_file: str = "processed/contract_law.jsonl"
+    faiss_index_file: str = "index/faiss.index"
+    faiss_meta_file: str = "index/faiss_meta.jsonl"
+    bm25_index_file: str = "index/bm25.pkl"
+
+    top_k: int = 10
+    bm25_weight: float = 0.4
+    dense_weight: float = 0.6
+
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+
+class PDFConfig(BaseModel):
+    enable_ocr: bool = True
+    ocr_lang: str = "chi_sim"
+
+
+class ServerConfig(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8000
+    reload: bool = False
+
+
+class RoutingConfig(BaseModel):
+    enable_router: bool = True
+    llm_based: bool = False
+
+
 class AppConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
     llm: LLMConfig = LLMConfig()
-    retrieval: RetrievalConfig = RetrievalConfig() 
+    retrieval: RetrievalConfig = RetrievalConfig()
+    pdf: PDFConfig = PDFConfig()
+    server: ServerConfig = ServerConfig()
+    routing: RoutingConfig = RoutingConfig()
 
     @classmethod
     def load(cls, config_file: Optional[str] = None) -> "AppConfig":
@@ -41,5 +99,8 @@ class AppConfig(BaseModel):
         Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.processed_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.index_dir).mkdir(parents=True, exist_ok=True)
+        Path(cfg.paths.eval_dir).mkdir(parents=True, exist_ok=True)
+        Path(cfg.paths.upload_dir).mkdir(parents=True, exist_ok=True)
+        Path(cfg.paths.graph_dir).mkdir(parents=True, exist_ok=True)
 
         return cfg
