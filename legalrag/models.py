@@ -23,6 +23,34 @@ class RetrievalHit(BaseModel):
     rank: int
 
 
+class QueryType(str, Enum):
+    DEFINITION = "definition"
+    LIABILITY = "liability"
+    VALIDITY = "validity"
+    PROCEDURE = "procedure"
+    TERMINATION = "termination"
+    DAMAGE = "damage"
+    OTHER = "other"
+
+
+class RoutingMode(str, Enum):
+    DIRECT_LLM = "direct_llm"
+    RAG = "rag"
+    GRAPH_AUGMENTED = "graph_augmented"
+
+
+class RoutingDecision(BaseModel):
+    query_type: QueryType
+    mode: RoutingMode
+    top_k_factor: float = 1.0
+
+
+class RagAnswer(BaseModel):
+    question: str
+    answer: str
+    hits: List[RetrievalHit]
+
+
 class LawNode(BaseModel):
     article_id: str
     article_no: str
