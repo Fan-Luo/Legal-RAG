@@ -36,3 +36,42 @@ class LLMClient(BaseModel):
         )
         inst._init_backend(llm_cfg)
         return inst
+
+    def _init_backend(self, llm_cfg):
+        if self.provider == "openai":
+            api_key = os.getenv(llm_cfg.api_key_env, "")
+            base_url = os.getenv(llm_cfg.base_url_env, None)
+            if not api_key:
+                logger.warning("[LLM] OPENAI_API_KEY 未设置，将使用降级模式。")
+                self.client = None
+            else:
+                self.client = OpenAI(api_key=api_key, base_url=base_url)
+                logger.info("[LLM] OpenAI client 初始化完成")
+        else:
+            raise ValueError(f"Unknown provider: {self.provider}")
+
+    def chat(self, prompt: str) -> str:
+        if self.provider == "openai":
+            return self._chat_openai(prompt)
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+
+    def _chat_openai(self, prompt: str) -> str:
+        if self.client is None:
+            return (
+                "【注意】OpenAI API 未配置或不可用，当前只能展示检索到的条文。"
+            )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "你是一名中国合同法方向的法律助手。"},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            logger.exception(f"[LLM] OpenAI 调用失败: {e}")
+            return (
+                "【注意】OpenAI 调用失败，当前只能展示检索到的条文。"
+            )
