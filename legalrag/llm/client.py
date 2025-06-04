@@ -47,12 +47,47 @@ class LLMClient(BaseModel):
             else:
                 self.client = OpenAI(api_key=api_key, base_url=base_url)
                 logger.info("[LLM] OpenAI client 初始化完成")
+        elif self.provider == "qwen-local":
+            model_path = self.model_name
+            logger.info(f"[LLM] 加载本地 Qwen 模型：{model_path}")
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    model_path, trust_remote_code=True
+                )
+                if torch.cuda.is_available():
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        model_path,
+                        trust_remote_code=True,
+                        torch_dtype=torch.float16,
+                        device_map="auto",
+                    )
+                else:
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        model_path,
+                        trust_remote_code=True,
+                        torch_dtype=torch.float32,
+                    ).to("cpu")
+                self.model.eval()
+                logger.info("[LLM] Qwen 模型加载成功")
+            except Exception as e:
+                logger.exception(f"[LLM] Qwen 加载失败，进入降级模式: {e}")
+                self.tokenizer = None
+                self.model = None
+                self.client = None
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
     def chat(self, prompt: str) -> str:
         if self.provider == "openai":
             return self._chat_openai(prompt)
+        elif self.provider == "qwen-local":
+            if self.model is None or self.tokenizer is None:
+                return (
+                    "【注意】本地 Qwen 模型未成功加载，当前为降级演示模式。\n\n"
+                    "以下为系统整理的参考语境，请结合实际法律条文自行判断：\n\n"
+                    + prompt[-1500:]
+                )
+            return self._chat_qwen(prompt)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
 
@@ -75,3 +110,22 @@ class LLMClient(BaseModel):
             return (
                 "【注意】OpenAI 调用失败，当前只能展示检索到的条文。"
             )
+
+    def _chat_qwen(self, prompt: str) -> str:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_context_tokens,
+        ).to(device)
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=512,
+                do_sample=True,
+                temperature=0.3,
+                top_p=0.9,
+            )
+        text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return text[len(prompt) :].strip() or text.strip()
