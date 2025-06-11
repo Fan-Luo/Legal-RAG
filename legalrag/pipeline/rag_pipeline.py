@@ -6,6 +6,8 @@ from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
 from legalrag.models import RagAnswer, RetrievalHit
 from legalrag.retrieval.hybrid_retriever import HybridRetriever
+from legalrag.retrieval.graph_store import LawGraphStore
+from legalrag.routing.router import QueryRouter
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,6 +18,11 @@ class RagPipeline:
         self.cfg = cfg
         self.retriever = HybridRetriever(cfg)
         self.llm = LLMClient.from_config(cfg)
+        self.graph = LawGraphStore(cfg)
+        self.router = QueryRouter(
+            llm_client=self.llm,
+            llm_based=cfg.routing.llm_based,
+        )
 
     def _build_prompt(self, question: str, hits: List[RetrievalHit]) -> str:
         ctx_lines = []
@@ -47,9 +54,15 @@ class RagPipeline:
 """
         return prompt
 
-    def answer(self, question: str, top_k: int | None = None) -> RagAnswer: 
+    def answer(self, question: str, top_k: int | None = None) -> RagAnswer:
+        decision = self.router.route(question)
+        eff_top_k = int((top_k or self.cfg.retrieval.top_k) * decision.top_k_factor)
+        eff_top_k = max(3, min(eff_top_k, 30))
 
-        hits = self.retriever.search(question, top_k=top_k)
+        logger.info(f"[RAG] query: {question}; mode={decision.mode}, top_k={eff_top_k}")
+
+        hits = self.retriever.search(question, top_k=eff_top_k)
+
         prompt = self._build_prompt(question, hits)
         raw_answer = self.llm.chat(prompt)
         return RagAnswer(question=question, answer=raw_answer, hits=hits)
