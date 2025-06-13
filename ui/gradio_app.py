@@ -34,7 +34,7 @@ def rag_interface(question: str, top_k: int):
 
 
 with gr.Blocks() as demo:
-    gr.Markdown("# Legal-RAG：民法典合同编 RAG Demo")
+    gr.Markdown("# 📚 Legal-RAG：民法典合同编 RAG Demo")
 
     with gr.Row():
         with gr.Column(scale=2):
