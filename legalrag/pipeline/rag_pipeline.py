@@ -24,25 +24,38 @@ class RagPipeline:
             llm_based=cfg.routing.llm_based,
         )
 
-    def _build_prompt(self, question: str, hits: List[RetrievalHit]) -> str:
+    def _build_prompt(self, question: str, hits: list[RetrievalHit]) -> str:
+
         ctx_lines = []
         for h in hits:
             c = h.chunk
+            # Include chapter/section/article info
             header = f"{c.law_name} {c.article_no}"
-            if c.chapter:
+            if getattr(c, "chapter", None):
                 header = f"{c.chapter} - {header}"
-            if c.section:
+            if getattr(c, "section", None):
                 header = f"{c.section} - {header}"
             ctx_lines.append(f"【条文 {h.rank} | {header}】\n{c.text}\n")
         context = "\n\n".join(ctx_lines)
 
-        prompt = f"""你是一名精通中国《民法典·合同编》的法律助手，请严格依据给定的法律条文回答用户问题。
+        prompt = f"""
+你是一名精通中国《民法典·合同编》的法律助手，专门为用户提供基于现有法律条文的专业法律意见。请严格遵循以下规则：
 
-回答要求：
-1. 先用自然语言给出结论和理由。
-2. 明确引用具体的法律条文（篇、章、节、条号），格式类似：
+【基本要求】
+1. 先用自然语言给出结论和理由，逻辑清晰、条理分明。
+2. 必须明确引用具体法律条文（篇、章、节、条号），格式示例如：
    - 《民法典·合同编》第XXX条：……
-3. 如果检索结果不足或无法判断，请明确说明“不足以作出明确判断”，不要编造法律条文。
+3. 仅依据提供的候选法律条文作答，不得自行编造或推测不存在的条文。
+4. 如果现有法律条文不足以作出明确判断，应明确说明：
+   - “根据提供条文，不足以作出明确判断。”
+5. 回答尽量简明扼要，同时兼顾专业性和审慎性。
+6. 严格遵循用户问题和上下文，不偏离主题。
+7. 可以使用条目编号或分段形式，使答案更易阅读。
+
+【输出结构化建议】
+- 结论（Summary / Key Point）
+- 法律依据（Legal Basis）  
+- 说明/理由（Explanation / Reasoning）  
 
 【用户问题】
 {question}
@@ -50,9 +63,35 @@ class RagPipeline:
 【检索到的候选法律条文（可能不完全相关）】
 {context}
 
-请根据上述条文给出专业、审慎的回答：
+【示例回答】
+
+示例 1：
+用户问题：甲公司未按合同约定支付货款，乙公司是否可以解除合同？
+候选条文：
+- 《民法典·合同编》第五百六十条：当事人一方不履行合同义务或者履行合同义务不符合约定的，对方可以要求履行或者采取补救措施。
+- 《民法典·合同编》第五百七十条：当事人一方严重违反合同义务的，对方可以解除合同。
+
+回答：
+结论：乙公司可以解除合同。
+法律依据：
+- 《民法典·合同编》第五百七十条：当事人一方严重违反合同义务的，对方可以解除合同。
+说明：甲公司未按合同约定支付货款，属于严重违反合同义务，依据第五百七十条，乙公司有权解除合同。
+
+示例 2：
+用户问题：丙方与丁方签订的合同条款存在歧义，该合同是否无效？
+候选条文：
+- 《民法典·合同编》第五十二条：依法成立的合同受法律保护。
+- 《民法典·合同编》第五十四条：违反法律、行政法规的合同无效。
+
+回答：
+结论：不足以作出明确判断。
+法律依据：根据提供条文，无明确条文说明合同条款歧义是否导致合同无效。
+说明：现有条文不足以判断条款歧义的效力，无法确定合同是否无效。
+
+【请根据上述条文和示例格式给出专业、审慎的回答】
 """
         return prompt
+
 
     def answer(self, question: str, top_k: int | None = None) -> RagAnswer:
         decision = self.router.route(question)
