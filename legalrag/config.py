@@ -33,7 +33,9 @@ class LLMConfig(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
     max_context_tokens: int = 4096
-
+    max_new_tokens: int = 512
+    temperature: float = 0.3
+    top_p: float = 0.9
 
 class RetrievalConfig(BaseModel):
     processed_file: str = "processed/contract_law.jsonl"

@@ -105,3 +105,25 @@ class RagPipeline:
         prompt = self._build_prompt(question, hits)
         raw_answer = self.llm.chat(prompt)
         return RagAnswer(question=question, answer=raw_answer, hits=hits)
+
+
+    async def answer_async(self, question: str, top_k: int | None = None) -> RagAnswer:
+        decision = self.router.route(question)
+        eff_top_k = int((top_k or self.cfg.retrieval.top_k) * decision.top_k_factor)
+        eff_top_k = max(3, min(eff_top_k, 30))
+
+        logger.info(f"[RAG] query: {question}; mode={decision.mode}, top_k={eff_top_k}")
+
+        # 检索条文
+        hits = await asyncio.to_thread(self.retriever.search, question, eff_top_k)
+
+        # 构建 Prompt
+        prompt = self._build_prompt(question, hits)
+
+        # 调用 LLM（同步或降级模式）
+        if hasattr(self.llm, "chat_async"):
+            raw_answer = await self.llm.chat_async(prompt)
+        else:
+            raw_answer = await asyncio.to_thread(self.llm.chat, prompt)
+
+        return RagAnswer(question=question, answer=raw_answer, hits=hits)

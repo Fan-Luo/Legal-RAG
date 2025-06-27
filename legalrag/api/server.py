@@ -46,7 +46,6 @@ def startup_event():
         logger.info("[API] RAG Pipeline 初始化完成")
     except Exception as e:
         logger.exception("[API] RAG Pipeline 初始化失败")
-        # Optionally raise to prevent API from starting
         raise RuntimeError("RAG Pipeline 初始化失败") from e
 
 # -----------------------
@@ -57,33 +56,39 @@ def health():
     return {"status": "ok"}
 
 # -----------------------
-# RAG Query Endpoint
+# RAG Query Endpoint (async)
 # -----------------------
 @app.post("/rag/query")
 async def rag_query(body: dict):
     if pipeline is None:
         raise HTTPException(status_code=503, detail="RAG Pipeline 未初始化")
-    
+
     question = body.get("question")
     if not question:
         raise HTTPException(status_code=400, detail="请求中缺少 'question' 字段")
-    
+
     try:
-        ans = pipeline.answer(question)
+        # 调用异步 LLM
+        ans = await pipeline.answer_async(question)
+
+        # ans 是结构化 dict: text, mode, provider, context_snippet, hits
         return {
-            "question": ans.question,
-            "answer": ans.answer,
+            "question": question,
+            "answer": ans["text"],
+            "mode": ans["mode"],                 # normal / degraded
+            "provider": ans["provider"],         # qwen-local / openai
+            "context_snippet": ans.get("context_snippet", ""),
             "hits": [
                 {
                     "rank": h.rank,
                     "score": h.score,
                     "law_name": h.chunk.law_name,
-                    "chapter": h.chunk.chapter,
-                    "section": h.chunk.section,
+                    "chapter": h.chunk.chapter or "",
+                    "section": h.chunk.section or "",
                     "article_no": h.chunk.article_no,
                     "text": h.chunk.text,
                 }
-                for h in ans.hits
+                for h in ans.get("hits", [])
             ],
         }
     except Exception as e:
