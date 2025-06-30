@@ -47,7 +47,7 @@ class RetrievalConfig(BaseModel):
     bm25_weight: float = 0.4
     dense_weight: float = 0.6
 
-    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "BAAI/bge-base-zh-v1.5"  # BAAI/bge-m3 for better performance
 
 
 class PDFConfig(BaseModel):
