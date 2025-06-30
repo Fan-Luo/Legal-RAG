@@ -48,20 +48,32 @@ async def rag_interface(question: str, top_k: int, answer_style: str, chat_histo
     return response, hits_display, chat_history
 
 # -----------------------
-# PDF 上传接口（同步）
+# PDF 上传接口 
 # -----------------------
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
 def ingest_pdf(file):
     """解析 PDF 并返回文本预览"""
     if not file.name.endswith(".pdf"):
         return "仅支持 PDF 文件", None, None
 
+    # 文件大小检查 
+    file.seek(0, 2)  # 移动到文件末尾
+    size = file.tell()
+    file.seek(0)     # 重置指针
+
+    if size > MAX_UPLOAD_SIZE:
+        return f"文件过大（{size/1024/1024:.2f} MB），最大仅支持 10 MB", None, None
+
+    # 保存上传的文件
     tmp_path = f"{cfg.paths.upload_dir}/{file.name}"
-    content = file.read()
     with open(tmp_path, "wb") as f:
-        f.write(content)
-    
+        f.write(file.read())
+
+    # 解析 PDF
     text = extract_text_from_pdf(tmp_path, cfg)
     return f"PDF 上传成功，文本长度: {len(text)}", None, None
+
 
 # -----------------------
 # Gradio UI

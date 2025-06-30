@@ -101,7 +101,13 @@ async def rag_query(body: dict):
 @app.post("/ingest/pdf")
 async def ingest_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 文件上传")
+        raise HTTPException(status_code=400, detail="请上传 PDF 文件")
+
+    # 获取文件大小
+    file_size = len(await file.read())  
+    if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"文件大小超过限制（最大 {MAX_FILE_SIZE_MB}MB）")
+    
 
     tmp_path = f"{cfg.paths.upload_dir}/{file.filename}"
     try:
