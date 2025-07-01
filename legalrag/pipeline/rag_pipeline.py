@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
+
+import numpy as np
+import torch
+from transformers import AutoTokenizer, AutoModel
 
 from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
-from legalrag.models import RagAnswer, RetrievalHit
+from legalrag.models import (
+    RagAnswer,
+    RetrievalHit,
+    QueryType,
+    RoutingMode,
+    LawChunk,
+)
 from legalrag.retrieval.hybrid_retriever import HybridRetriever
 from legalrag.retrieval.graph_store import LawGraphStore
 from legalrag.routing.router import QueryRouter
@@ -13,9 +23,52 @@ from legalrag.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    简单余弦相似度实现，a/b 都是一维向量。
+    """
+    a = np.asarray(a, dtype="float32")
+    b = np.asarray(b, dtype="float32")
+    na = np.linalg.norm(a) + 1e-8
+    nb = np.linalg.norm(b) + 1e-8
+    return float(np.dot(a, b) / (na * nb))
+
+
+def extract_key_term(question: str) -> str:
+    """
+    非严格的关键词抽取，用于 definition-special 行为。
+    这里先做一个非常简单的版本：
+    - 截掉末尾问号
+    - 尝试去掉常见前缀：'什么是' / '如何理解' / '本法所称'
+    """
+    q = question.strip().rstrip("？?")
+
+    patterns = ["什么是", "如何理解", "本法所称", "本条所称", "本编所称"]
+    for p in patterns:
+        if q.startswith(p):
+            return q[len(p):].strip()
+
+    return q
+
+
 class RagPipeline:
+    """
+    Graph-aware RAG Pipeline（2025 工程版）
+
+    - HybridRetriever: dense(BGE) + sparse(BM25)
+    - LawGraphStore: 结构图 / 概念图
+    - QueryRouter: QueryType + RoutingMode 决策
+    - Graph-augmented retrieval:
+        * 从 dense+sparse 结果获取种子条文
+        * 在图上做多跳扩展
+        * 对 definition 类问题做额外扩展
+        * 用 BGE 再算一遍语义得分做 re-ranking
+    """
+
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
+
+        # 基础组件
         self.retriever = HybridRetriever(cfg)
         self.llm = LLMClient.from_config(cfg)
         self.graph = LawGraphStore(cfg)
@@ -24,106 +77,305 @@ class RagPipeline:
             llm_based=cfg.routing.llm_based,
         )
 
-    def _build_prompt(self, question: str, hits: list[RetrievalHit]) -> str:
+        # 与 VectorStore 使用相同的 BGE encoder
+        model_name = cfg.retrieval.embedding_model  # e.g. "BAAI/bge-base-zh-v1.5"
+        logger.info(f"[RAG] Loading embedding model for graph-aware rerank: {model_name}")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.embed_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.embed_model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.embed_model.eval()
 
-        ctx_lines = []
+    
+    # Embedding helper 
+    def _encode_texts(self, texts: List[str]) -> np.ndarray:
+        """
+        使用 BGE 做句向量编码：
+        - tokenizer → model → mean pooling
+        - L2 归一化，方便用余弦相似度
+        """
+        if not texts:
+            # 这里假设 hidden_size=768；如果要更严谨，可以使用 self.embed_model.config.hidden_size
+            return np.zeros((0, 768), dtype="float32")
+
+        with torch.no_grad():
+            inputs = self.embed_tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            outputs = self.embed_model(**inputs)
+            last_hidden = outputs.last_hidden_state  # [b, seq, hidden]
+
+            mask = inputs["attention_mask"].unsqueeze(-1).type_as(last_hidden)  # [b, seq, 1]
+            summed = (last_hidden * mask).sum(dim=1)                             # [b, hidden]
+            counts = mask.sum(dim=1).clamp(min=1e-8)                             # [b, 1]
+            emb = (summed / counts).cpu().numpy().astype("float32")
+
+        norms = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8
+        emb = emb / norms
+        return emb
+
+
+    # Graph-aware retrieval
+    def _graph_augmented_retrieval(
+        self,
+        question: str,
+        decision,
+        top_k: int,
+    ) -> List[RetrievalHit]:
+        """
+        Graph-aware 检索流程：
+        1. baseline：HybridRetriever（BGE dense + BM25 sparse）
+        2. 取前若干条文作为 seed，在法条图上做多跳扩展
+        3. definition 类问题：根据关键词从定义节点扩展
+        4. 把 baseline hits + graph hits 合并
+        5. 用 BGE 重新计算语义相关度，做加权融合 & re-ranking
+        6. 为每条命中生成 explain 字段：来源、语义得分、graph_depth/relations
+        """
+        # --- Step 1: baseline RAG hits ---
+        rag_hits = self.retriever.search(question, top_k=top_k)
+        for h in rag_hits:
+            h.source = "retriever"
+
+        seed_ids = [
+            getattr(h.chunk, "id", None) or getattr(h.chunk, "article_id", None)
+            for h in rag_hits
+        ]
+        seed_ids = [sid for sid in seed_ids if sid]
+
+        # --- Step 2: graph expansion ---
+        graph_nodes = []
+
+        if hasattr(self.graph, "walk"):
+            try:
+                graph_nodes = self.graph.walk(
+                    start_ids=seed_ids,
+                    depth=2,
+                    rel_types=["refers_to", "related", "same_topic", "parent_of"],
+                    limit=80,
+                )
+            except TypeError:
+                graph_nodes = self.graph.walk(start_ids=seed_ids, depth=2)
+        elif hasattr(self.graph, "get_neighbors"):
+            for sid in seed_ids:
+                try:
+                    neighbors = self.graph.get_neighbors(sid, depth=2)
+                    graph_nodes.extend(neighbors)
+                except TypeError:
+                    neighbors = self.graph.get_neighbors(sid)
+                    graph_nodes.extend(neighbors)
+
+        # --- Step 3: definition-special expansion ---
+        if decision.query_type == QueryType.DEFINITION and hasattr(self.graph, "get_definition_sources"):
+            term = extract_key_term(question)
+            try:
+                def_nodes = self.graph.get_definition_sources(term)
+                graph_nodes.extend(def_nodes)
+            except Exception:
+                logger.warning("[RAG][graph] get_definition_sources failed", exc_info=True)
+
+        # 去重（避免和 baseline 结果重复）
+        seen_ids = set(seed_ids)
+        unique_nodes = []
+        for n in graph_nodes:
+            aid = getattr(n, "article_id", None) or getattr(n, "id", None)
+            if not aid or aid in seen_ids:
+                continue
+            seen_ids.add(aid)
+            unique_nodes.append(n)
+
+        # --- Step 4: convert graph nodes to RetrievalHit ---
+        graph_hits: List[RetrievalHit] = []
+        for n in unique_nodes:
+            chunk = LawChunk(
+                id=getattr(n, "article_id", None) or getattr(n, "id", None),
+                law_name=getattr(n, "law_name", "民法典·合同编"),
+                chapter=getattr(n, "chapter", None),
+                section=getattr(n, "section", None),
+                article_no=getattr(n, "article_no", ""),
+                text=getattr(n, "text", ""),
+                source="graph",
+                start_char=None,
+                end_char=None,
+            )
+
+            graph_hits.append(
+                RetrievalHit(
+                    chunk=chunk,
+                    score=0.5,  # 初始 graph 得分，后续会融合语义得分
+                    rank=-1,
+                    source="graph",
+                    graph_depth=getattr(n, "graph_depth", None),
+                    relations=getattr(n, "relations", None),
+                )
+            )
+
+        # --- Step 5: semantic re-ranking（dense + sparse + graph 融合） ---
+        combined: List[RetrievalHit] = rag_hits + graph_hits
+
+        if not combined:
+            return []
+
+        texts = [h.chunk.text or "" for h in combined]
+        vecs = self._encode_texts(texts)
+        qvec = self._encode_texts([question])[0]
+
+        for h, v in zip(combined, vecs):
+            sem = cosine_similarity(qvec, v)
+            h.semantic_score = sem
+            # 0.6 * 原始分数（dense+bm25 或 graph 初始分） + 0.4 * 语义分
+            h.score = 0.6 * float(h.score) + 0.4 * sem
+
+        # definition-special 的额外 boost
+        if decision.query_type == QueryType.DEFINITION:
+            combined = self._boost_definition_hits(combined)
+
+        # --- Step 6: final rank ---
+        combined.sort(key=lambda h: h.score, reverse=True)
+        top = combined[:top_k]
+        for i, h in enumerate(top, start=1):
+            h.rank = i
+
+        # --- Step 7: explainability ---
+        for h in top:
+            h.explain = {
+                "source": getattr(h, "source", None),
+                "semantic_score": getattr(h, "semantic_score", None),
+                "graph_depth": getattr(h, "graph_depth", None),
+                "relations": getattr(h, "relations", None),
+            }
+
+        return top
+
+    def _boost_definition_hits(self, hits: List[RetrievalHit]) -> List[RetrievalHit]:
+        """
+        对“定义类”问题进行额外提升：
+        - 文本中包含 “是指 / 本法所称 / 本条所称 / 本编所称” 等表达
+        - 属于“总则”章节
+        - graph 关系为 same_section / sibling
+        """
+        def is_definition_like(chunk: LawChunk) -> bool:
+            text = (chunk.text or "").replace("\n", "")
+            patterns = ["是指", "本法所称", "本条所称", "本编所称"]
+            return any(p in text for p in patterns)
+
+        boosted: List[RetrievalHit] = []
         for h in hits:
+            bonus = 0.0
+            if is_definition_like(h.chunk):
+                bonus += 0.2
+            if getattr(h.chunk, "chapter", None) and "总则" in h.chunk.chapter:
+                bonus += 0.1
+            # 如果 RetrievalHit 有 relation / relations 字段，可以做进一步加权
+            rel = getattr(h, "relation", None)
+            if rel in ("same_section", "sibling"):
+                bonus += 0.05
+
+            h.score = float(h.score) + bonus
+            boosted.append(h)
+
+        return boosted
+
+    def _build_prompt(
+        self,
+        question: str,
+        hits: List[RetrievalHit],
+        decision: Optional[object] = None,
+    ) -> str:
+        """
+        构造面向中文法律咨询场景的 RAG Prompt：
+        - 列出候选条文（含条号 / 章节 / 摘要）
+        - 要求先给结论，再说明理由，最后列出参考条文列表
+        - 禁止编造不存在的条文 / 条号
+        """
+        law_context_parts = []
+        for i, h in enumerate(hits, start=1):
             c = h.chunk
-            # Include chapter/section/article info
-            header = f"{c.law_name} {c.article_no}"
-            if getattr(c, "chapter", None):
-                header = f"{c.chapter} - {header}"
-            if getattr(c, "section", None):
-                header = f"{c.section} - {header}"
-            ctx_lines.append(f"【条文 {h.rank} | {header}】\n{c.text}\n")
-        context = "\n\n".join(ctx_lines)
+            article_no = getattr(c, "article_no", "") or ""
+            chapter = getattr(c, "chapter", "") or ""
+            section = getattr(c, "section", "") or ""
+            text = (c.text or "").strip()
+            score = getattr(h, "score", 0.0)
+            source = getattr(h, "source", "")
+
+            law_context_parts.append(
+                f"[候选条文 {i}] （score={score:.4f}, source={source})\n"
+                f"条号：{article_no}\n"
+                f"章节：{chapter} {section}\n"
+                f"内容：{text}\n"
+            )
+
+        law_context = "\n\n".join(law_context_parts) if law_context_parts else "（当前未检索到相关条文）"
+
+        query_type_str = ""
+        if decision is not None and hasattr(decision, "query_type"):
+            query_type_str = f"（推测问题类型：{decision.query_type}）"
 
         prompt = f"""
-你是一名精通中国《民法典·合同编》的法律助手，专门为用户提供基于现有法律条文的专业法律意见。请严格遵循以下规则：
+你是一名熟悉《中华人民共和国民法典（合同编）》的法律助手，请严格依据给定的候选条文进行分析，不要编造不存在的法律条文或条号。
 
-【基本要求】
-1. 先用自然语言给出结论和理由，逻辑清晰、条理分明。
-2. 必须明确引用具体法律条文（篇、章、节、条号），格式示例如：
-   - 《民法典·合同编》第XXX条：……
-3. 仅依据提供的候选法律条文作答，不得自行编造或推测不存在的条文。
-4. 如果现有法律条文不足以作出明确判断，应明确说明：
-   - “根据提供条文，不足以作出明确判断。”
-5. 回答尽量简明扼要，同时兼顾专业性和审慎性。
-6. 严格遵循用户问题和上下文，不偏离主题。
-7. 可以使用条目编号或分段形式，使答案更易阅读。
-
-【输出结构化建议】
-- 结论（Summary / Key Point）
-- 法律依据（Legal Basis）  
-- 说明/理由（Explanation / Reasoning）  
-
-【用户问题】
+用户问题{query_type_str}：
 {question}
 
-【检索到的候选法律条文（可能不完全相关）】
-{context}
+下面是根据检索和法条图得到的候选条文，请只在这些条文范围内进行推理：
 
-【示例回答】
+{law_context}
 
-示例 1：
-用户问题：甲公司未按合同约定支付货款，乙公司是否可以解除合同？
-候选条文：
-- 《民法典·合同编》第五百六十条：当事人一方不履行合同义务或者履行合同义务不符合约定的，对方可以要求履行或者采取补救措施。
-- 《民法典·合同编》第五百七十条：当事人一方严重违反合同义务的，对方可以解除合同。
+请给出结构化的回答，格式如下：
 
-回答：
-结论：乙公司可以解除合同。
-法律依据：
-- 《民法典·合同编》第五百七十条：当事人一方严重违反合同义务的，对方可以解除合同。
-说明：甲公司未按合同约定支付货款，属于严重违反合同义务，依据第五百七十条，乙公司有权解除合同。
+1. 结论：
+   - 用简洁的一句话先给出你的结论。
+   - 如果依据不足，请明确写出“依据不足，无法作出明确判断”。
 
-示例 2：
-用户问题：丙方与丁方签订的合同条款存在歧义，该合同是否无效？
-候选条文：
-- 《民法典·合同编》第五十二条：依法成立的合同受法律保护。
-- 《民法典·合同编》第五十四条：违反法律、行政法规的合同无效。
+2. 分析与理由：
+   - 逐条说明你参考了哪些条文，它们的内容是什么。
+   - 结合案件事实，分析这些条文为何支持（或不支持）该结论。
+   - 如果条文之间存在“引用关系 / 特殊条优于一般条”等，请一并说明。
 
-回答：
-结论：不足以作出明确判断。
-法律依据：根据提供条文，无明确条文说明合同条款歧义是否导致合同无效。
-说明：现有条文不足以判断条款歧义的效力，无法确定合同是否无效。
+3. 参考条文列表：
+   - 以“条号 + 简短说明”的形式列出你实际参考的条文。
+   - 如果某条文只是“可能相关但作用不大”，也可以标注为“次要参考”。
 
-【请根据上述条文和示例格式给出专业、审慎的回答】
+要求：
+- 如果给出的候选条文不足以得出可靠结论，请如实说明“现有条文不足以作出明确判断”，而不是编造条文或结论。
+- 不要引用未出现在候选列表中的法律条文条号。
+- 回答使用简体中文。
 """
-        return prompt
+        return prompt.strip()
 
-
-    def answer(self, question: str, top_k: int | None = None) -> RagAnswer:
+    # Public API
+    def answer(self, question: str, top_k: Optional[int] = None) -> RagAnswer:
+        """
+        同步 RAG 入口：
+        - 自动根据 Router 决策是否使用 Graph-augmented 模式
+        - 返回 RagAnswer（包括回答文本和命中条文列表）
+        """
         decision = self.router.route(question)
-        eff_top_k = int((top_k or self.cfg.retrieval.top_k) * decision.top_k_factor)
+        base_k = top_k or self.cfg.retrieval.top_k
+        eff_top_k = int(base_k * getattr(decision, "top_k_factor", 1.0))
         eff_top_k = max(3, min(eff_top_k, 30))
 
-        logger.info(f"[RAG] query: {question}; mode={decision.mode}, top_k={eff_top_k}")
+        logger.info(
+            f"[RAG] query: {question}; query_type={getattr(decision, 'query_type', None)}, "
+            f"mode={getattr(decision, 'mode', None)}, top_k={eff_top_k}"
+        )
 
-        hits = self.retriever.search(question, top_k=eff_top_k)
-
-        prompt = self._build_prompt(question, hits)
-        raw_answer = self.llm.chat(prompt)
-        return RagAnswer(question=question, answer=raw_answer, hits=hits)
-
-
-    async def answer_async(self, question: str, top_k: int | None = None) -> RagAnswer:
-        decision = self.router.route(question)
-        eff_top_k = int((top_k or self.cfg.retrieval.top_k) * decision.top_k_factor)
-        eff_top_k = max(3, min(eff_top_k, 30))
-
-        logger.info(f"[RAG] query: {question}; mode={decision.mode}, top_k={eff_top_k}")
-
-        # 检索条文
-        hits = await asyncio.to_thread(self.retriever.search, question, eff_top_k)
-
-        # 构建 Prompt
-        prompt = self._build_prompt(question, hits)
-
-        # 调用 LLM（同步或降级模式）
-        if hasattr(self.llm, "chat_async"):
-            raw_answer = await self.llm.chat_async(prompt)
+        if getattr(decision, "mode", None) == RoutingMode.GRAPH_AUGMENTED:
+            hits = self._graph_augmented_retrieval(question, decision, eff_top_k)
         else:
-            raw_answer = await asyncio.to_thread(self.llm.chat, prompt)
+            hits = self.retriever.search(question, top_k=eff_top_k)
+            for h in hits:
+                h.source = "retriever"
 
-        return RagAnswer(question=question, answer=raw_answer, hits=hits)
+        prompt = self._build_prompt(question, hits, decision)
+        raw_answer = self.llm.chat(prompt)
+
+        return RagAnswer(
+            question=question,
+            answer=raw_answer,
+            hits=hits,
+        )

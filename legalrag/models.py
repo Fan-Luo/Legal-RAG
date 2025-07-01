@@ -20,8 +20,14 @@ class LawChunk(BaseModel):
 class RetrievalHit(BaseModel):
     chunk: LawChunk
     score: float
-    rank: int
+    rank: Optional[int] = None
 
+    source: Literal["retriever", "graph", "rerank"] = "retriever"
+    semantic_score: Optional[float] = None
+    graph_depth: Optional[int] = None
+    relations: Optional[list[str]] = None   # 或 dict, 看你 graph 结构
+    seed_article_id: Optional[str] = None
+    explain: Optional[dict[str, Any]] = None
 
 class QueryType(str, Enum):
     DEFINITION = "definition"
