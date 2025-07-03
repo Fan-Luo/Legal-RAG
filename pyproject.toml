@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling>=1.18.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "legal-rag"
+version = "0.1.0"
+description = "Graph-aware RAG system for Chinese Contract Law (Legal-RAG)"
+readme = "README.md"
+requires-python = ">=3.9,<3.13"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Fan Luo", email = "luofan813@gmail.com" }
+]
+
+
+dependencies = [
+  #  Web / API 
+  "fastapi",
+  "uvicorn[standard]",
+
+  #  数据模型 / 配置 
+  "pydantic>=2.0.0",
+  "pyyaml",
+
+  #  日志 
+  "loguru",
+
+  #  数值 / 数据处理 
+  "numpy",
+  "pandas",
+
+  #  向量 / 检索 
+  "sentence-transformers>=2.2.0",
+  "faiss-cpu",
+  "rank-bm25",
+  "jieba",
+
+  #  LLM / 模型 
+  "torch",
+  "transformers>=4.40.0",
+  "tiktoken",
+
+  #  PDF & OCR 
+  "pdfplumber",
+  "pdf2image",
+  "pytesseract",
+  "Pillow",
+
+  #  UI / HTTP 
+  "gradio",
+  "httpx",
+
+  # 如果用到  openai，可以加上这一行：
+  "openai>=1.0.0",
+
+  # Notebook 里用到的可视化 
+  "matplotlib>=3.8.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/Fan-Luo/Legal-RAG"
+Repository = "https://github.com/Fan-Luo/Legal-RAG"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "black>=24.0.0",
+  "isort>=5.13.0",
+  "mypy>=1.8.0"
+]
+
+notebooks = [
+  "jupyter>=1.0.0",
+  "ipykernel>=6.29.0",
+  "notebook>=7.0.0"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["legalrag"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "legalrag",
+  "scripts",
+  "ui",
+  "notebooks",
+  "data",
+  "README.md",
+  "LICENSE",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = false
