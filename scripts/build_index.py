@@ -87,7 +87,7 @@ def build_faiss(cfg: AppConfig, chunks: List[LawChunk]):
     meta_path = Path(rcfg.faiss_meta_file)
     with meta_path.open("w", encoding="utf-8") as f:
         for c in chunks:
-            f.write(c.model_dump_json(ensure_ascii=False) + "\n")
+            f.write(c.model_dump_json() + "\n")
     logger.info(f"[FAISS] 元数据写入 {meta_path}")
 
 
