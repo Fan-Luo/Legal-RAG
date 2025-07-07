@@ -372,7 +372,13 @@ class RagPipeline:
                 h.source = "retriever"
 
         prompt = self._build_prompt(question, hits, decision)
+        self.logger.info("[RAG] calling LLM.chat (provider=%s, model=%s), prompt_chars=%d",
+                         self.cfg.llm.provider, self.cfg.llm.model, len(prompt))
+
         raw_answer = self.llm.chat(prompt)
+
+        self.logger.info("[RAG] LLM.chat returned type=%s, len=%s",
+                         type(raw_answer).__name__, len(raw_answer) if isinstance(raw_answer, str) else "NA")
 
         if isinstance(raw_answer, dict):
             raw_answer = raw_answer.get("text") or raw_answer.get("answer") or str(raw_answer)

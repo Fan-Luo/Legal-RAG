@@ -220,10 +220,10 @@ def main() -> int:
         text = _read_text(p)
         logger.info(f"File size: {len(text)} chars")
 
-        recs = parse_by_lines(text, source=p.name, law_name="中华人民共和国民法典（合同编）")
+        recs = parse_by_lines(text, source=p.name, law_name="中华人民共和国民法典")
         if len(recs) == 0:
             logger.warning("Line-based parse got 0 records; switching to scan fallback.")
-            recs = parse_by_scan_fallback(text, source=p.name, law_name="中华人民共和国民法典（合同编）")
+            recs = parse_by_scan_fallback(text, source=p.name, law_name="中华人民共和国民法典")
 
         logger.info(f"Parsed records from {p.name}: {len(recs)}")
         all_records.extend(recs)

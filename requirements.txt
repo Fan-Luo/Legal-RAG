@@ -1,20 +1,40 @@
+# -------- Core framework --------
 fastapi
 uvicorn[standard]
-pydantic>=2.0.0
-loguru
+pydantic>=2.0
+
+# -------- Retrieval & NLP --------
 faiss-cpu
+sentence-transformers
 rank-bm25
 jieba
 numpy
-pandas
-sentence-transformers>=2.2.0
+scikit-learn
+
+# -------- Embeddings --------
+transformers>=4.39
 torch
-transformers>=4.40.0
-tiktoken
+
+# -------- LLM acceleration --------
+accelerate
+
+# -------- PDF & OCR --------
 pdfplumber
 pdf2image
 pytesseract
 Pillow
+
+# -------- UI --------
 gradio
-httpx
+streamlit
+
+# -------- OpenAI --------
+openai
+
+# -------- Utils --------
+loguru
 pyyaml
+tqdm
+
+# -------- Dev / Test --------
+pytest

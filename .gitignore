@@ -46,7 +46,9 @@ cache/
 *.pdf.out
 
 # Generated data
-data/
+data/processed
+data/index
+data/graph
 datasets/
 
 # Temporary build outputs

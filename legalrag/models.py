@@ -50,14 +50,18 @@ class RetrievalHit(BaseModel):
         return v
 
 
+
 class QueryType(str, Enum):
-    DEFINITION = "definition"
-    LIABILITY = "liability"
-    VALIDITY = "validity"
-    PROCEDURE = "procedure"
-    TERMINATION = "termination"
-    DAMAGE = "damage"
-    OTHER = "other"
+    """
+    High-level legal question categories for contract law RAG.
+    """
+
+    DEFINITION = "definition"  # 概念 / 定义 / 构成要件
+    VALIDITY = "validity"      # 合同成立、生效、无效、可撤销（欺诈、胁迫、显失公平等）
+    PERFORMANCE = "performance"    # 履行、抗辩、价款、风险承担、瑕疵履行等
+    BREACH_REMEDY = "breach_remedy"    # 违约责任、违约金、损害赔偿、定金、继续履行等救济
+    TERMINATION = "termination"    # 合同解除、终止、解除后果
+    PROCEDURE = "procedure"    # 诉讼时效、期间起算、中断中止、举证责任、程序性问题
 
 
 class RoutingMode(str, Enum):
