@@ -374,6 +374,10 @@ class RagPipeline:
         prompt = self._build_prompt(question, hits, decision)
         raw_answer = self.llm.chat(prompt)
 
+        if isinstance(raw_answer, dict):
+            raw_answer = raw_answer.get("text") or raw_answer.get("answer") or str(raw_answer)
+        raw_answer = str(raw_answer)
+
         return RagAnswer(
             question=question,
             answer=raw_answer,
