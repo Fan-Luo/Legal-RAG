@@ -12,6 +12,7 @@ class LawChunk(BaseModel):
     chapter: Optional[str] = None
     section: Optional[str] = None
     article_no: str
+    article_id: str # article_no 的数字编号
     text: str
     source: Optional[str] = None
     start_char: Optional[int] = None

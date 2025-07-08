@@ -202,7 +202,6 @@ class QueryRouter:
 问题：{question}
 """.strip()
 
-        # 你的 LLMClient 里目前有 complete() 兼容实现（或你可替换为 chat()）。
         answer = self.llm_client.complete(prompt) if hasattr(self.llm_client, "complete") else self.llm_client.chat(prompt)
         label = (answer or "").strip().upper()
 

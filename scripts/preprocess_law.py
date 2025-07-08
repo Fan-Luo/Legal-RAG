@@ -8,10 +8,48 @@ from typing import Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
 from legalrag.utils.logger import get_logger
+import re
 
 logger = get_logger(__name__)
 
 CN_NUM = r"[一二三四五六七八九十百千万〇零0-9]+"
+
+def normalize_article_no(s: str) -> str:
+    if isinstance(s, int):
+        return s
+
+    s = (s or "").strip()
+    m = re.search(r"(\d+)", s)
+    if m:
+        return str(int(m.group(1)))
+
+    # 中文数字（覆盖“第五百八十五条”）
+    CN_DIGIT = {"零":0,"〇":0,"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9}
+    CN_UNIT = {"十":10,"百":100,"千":1000}
+    CN_BIG  = {"万":10_000,"亿":100_000_000}
+
+    s2 = re.sub(r"[第条\s]", "", s)
+    total, section, number = 0, 0, 0
+    for ch in s2:
+        if ch in CN_DIGIT:
+            number = CN_DIGIT[ch]
+        elif ch in CN_UNIT:
+            unit = CN_UNIT[ch]
+            if number == 0:
+                number = 1
+            section += number * unit
+            number = 0
+        elif ch in CN_BIG:
+            big = CN_BIG[ch]
+            section += number
+            number = 0
+            total += section * big
+            section = 0
+    section += number
+    v = total + section
+    return str(v) if v > 0 else ""
+
+
 
 # ---- Headings (can be "第三编", "第一分编", "第一章", "第一节"; may include wide spaces) ----
 PART_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*编(?P<title>.*)$")
@@ -83,7 +121,8 @@ def _finalize(st: State, out: List[Dict]) -> None:
             "chapter": st.chapter,
             "section": st.section,
             "article_no": st.cur_no,     # normalized: 第...条
-            "article_key": article_key,  # raw: 四百六十三 / 463
+            "article_key": article_key,  # raw: 四百六十三 
+            "article_id":  normalize_article_no(article_no) , # 463
             "text": text,
             "source": st.source,
         }
@@ -181,6 +220,7 @@ def parse_by_scan_fallback(text: str, source: str, law_name: str) -> List[Dict]:
                 "section": "",
                 "article_no": article_no,
                 "article_key": key,
+                "article_id":  normalize_article_no(article_no) ,
                 "text": seg_text,
                 "source": source,
             }
