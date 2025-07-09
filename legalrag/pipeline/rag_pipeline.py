@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
@@ -19,6 +20,7 @@ from legalrag.retrieval.hybrid_retriever import HybridRetriever
 from legalrag.retrieval.graph_store import LawGraphStore
 from legalrag.routing.router import QueryRouter
 from legalrag.utils.logger import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -84,7 +86,8 @@ class RagPipeline:
         self.embed_tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.embed_model = AutoModel.from_pretrained(model_name).to(self.device)
         self.embed_model.eval()
-
+        self.prompt_path = Path("legalrag/prompts/legal_rag_prompt.txt")
+        self.prompt_template = self.prompt_path.read_text(encoding="utf-8")
     
     # Embedding helper 
     def _encode_texts(self, texts: List[str]) -> np.ndarray:
@@ -136,7 +139,7 @@ class RagPipeline:
         5. 用 BGE 重新计算语义相关度，做加权融合 & re-ranking
         6. 为每条命中生成 explain 字段：来源、语义得分、graph_depth/relations
         """
-        # --- Step 1: baseline RAG hits ---
+        #  Step 1: baseline RAG hits 
         rag_hits = self.retriever.search(question, top_k=top_k)
         for h in rag_hits:
             h.source = "retriever"
@@ -147,7 +150,7 @@ class RagPipeline:
         ]
         seed_ids = [sid for sid in seed_ids if sid]
 
-        # --- Step 2: graph expansion ---
+        #  Step 2: graph expansion 
         graph_nodes = []
 
         if hasattr(self.graph, "walk"):
@@ -169,7 +172,7 @@ class RagPipeline:
                     neighbors = self.graph.get_neighbors(sid)
                     graph_nodes.extend(neighbors)
 
-        # --- Step 3: definition-special expansion ---
+        #  Step 3: definition-special expansion 
         if decision.query_type == QueryType.DEFINITION and hasattr(self.graph, "get_definition_sources"):
             term = extract_key_term(question)
             try:
@@ -188,7 +191,7 @@ class RagPipeline:
             seen_ids.add(aid)
             unique_nodes.append(n)
 
-        # --- Step 4: convert graph nodes to RetrievalHit ---
+        #  Step 4: convert graph nodes to RetrievalHit 
         graph_hits: List[RetrievalHit] = []
         for n in unique_nodes:
             chunk = LawChunk(
@@ -214,7 +217,7 @@ class RagPipeline:
                 )
             )
 
-        # --- Step 5: semantic re-ranking（dense + sparse + graph 融合） ---
+        #  Step 5: semantic re-ranking（dense + sparse + graph 融合） 
         combined: List[RetrievalHit] = rag_hits + graph_hits
 
         if not combined:
@@ -234,13 +237,13 @@ class RagPipeline:
         if decision.query_type == QueryType.DEFINITION:
             combined = self._boost_definition_hits(combined)
 
-        # --- Step 6: final rank ---
+        #  Step 6: final rank 
         combined.sort(key=lambda h: h.score, reverse=True)
         top = combined[:top_k]
         for i, h in enumerate(top, start=1):
             h.rank = i
 
-        # --- Step 7: explainability ---
+        #  Step 7: explainability 
         for h in top:
             h.explain = {
                 "source": getattr(h, "source", None),
@@ -287,10 +290,7 @@ class RagPipeline:
         decision: Optional[object] = None,
     ) -> str:
         """
-        构造面向中文法律咨询场景的 RAG Prompt：
-        - 列出候选条文（含条号 / 章节 / 摘要）
-        - 要求先给结论，再说明理由，最后列出参考条文列表
-        - 禁止编造不存在的条文 / 条号
+        构造面向中文法律咨询场景的 RAG Prompt
         """
         law_context_parts = []
         for i, h in enumerate(hits, start=1):
@@ -315,37 +315,13 @@ class RagPipeline:
         if decision is not None and hasattr(decision, "query_type"):
             query_type_str = f"（推测问题类型：{decision.query_type}）"
 
-        prompt = f"""
-你是一名熟悉《中华人民共和国民法典（合同编）》的法律助手，请严格依据给定的候选条文进行分析，不要编造不存在的法律条文或条号。
+ 
 
-用户问题{query_type_str}：
-{question}
-
-下面是根据检索和法条图得到的候选条文，请只在这些条文范围内进行推理：
-
-{law_context}
-
-请给出结构化的回答，格式如下：
-
-1. 结论：
-   - 用简洁的一句话先给出你的结论。
-   - 如果依据不足，请明确写出“依据不足，无法作出明确判断”。
-
-2. 分析与理由：
-   - 逐条说明你参考了哪些条文，它们的内容是什么。
-   - 结合案件事实，分析这些条文为何支持（或不支持）该结论。
-   - 如果条文之间存在“引用关系 / 特殊条优于一般条”等，请一并说明。
-
-3. 参考条文列表：
-   - 以“条号 + 简短说明”的形式列出你实际参考的条文。
-   - 如果某条文只是“可能相关但作用不大”，也可以标注为“次要参考”。
-
-要求：
-- 如果给出的候选条文不足以得出可靠结论，请如实说明“现有条文不足以作出明确判断”，而不是编造条文或结论。
-- 不要引用未出现在候选列表中的法律条文条号。
-- 回答使用简体中文。
-"""
-        return prompt.strip()
+        return self.prompt_template.format(
+            query_type=query_type_str,
+            question=question,
+            law_context=law_context,
+        )
 
     # Public API
     def answer(self, question: str, top_k: Optional[int] = None) -> RagAnswer:
@@ -372,12 +348,12 @@ class RagPipeline:
                 h.source = "retriever"
 
         prompt = self._build_prompt(question, hits, decision)
-        self.logger.info("[RAG] calling LLM.chat (provider=%s, model=%s), prompt_chars=%d",
+        logger.info("[RAG] calling LLM.chat (provider=%s, model=%s), prompt_chars=%d",
                          self.cfg.llm.provider, self.cfg.llm.model, len(prompt))
 
         raw_answer = self.llm.chat(prompt)
 
-        self.logger.info("[RAG] LLM.chat returned type=%s, len=%s",
+        logger.info("[RAG] LLM.chat returned type=%s, len=%s",
                          type(raw_answer).__name__, len(raw_answer) if isinstance(raw_answer, str) else "NA")
 
         if isinstance(raw_answer, dict):

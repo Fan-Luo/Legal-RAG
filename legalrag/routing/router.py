@@ -96,11 +96,11 @@ class QueryRouter:
             Rule(
                 name="definition",
                 keywords=[
-                    "定义", "含义", "概念", "是什么", "什么是", "如何理解", "本法所称",
+                    "定义", "含义", "概念", "是什么", "什么是", "解释", "如何理解", "本法所称",
                     "何谓", "如何认定", "构成要件",
                 ],
                 qtype=QueryType.DEFINITION,
-                weight=1.1,
+                weight=1.25,
                 mode=RoutingMode.GRAPH_AUGMENTED,
                 priority=40,
             ),
@@ -184,13 +184,13 @@ class QueryRouter:
         """
         LLM fallback when rule score is low or ambiguous.
         Expect EXACT one of:
-          DEFINITION / VALIDITY / PERFORMANCE / BREACH_REMEDY / TERMINATION / PROCEDURE
+          DEFINITION / VALIDITY / PERFORMANCE / BREACH_REMEDY / TERMINATION / PROCEDURE / OTHER
         """
         if self.llm_client is None:
             return None
 
         prompt = f"""
-你是合同法法律问题分类器，请把问题分类为以下 6 类之一，并只返回英文类别名（不要解释）：
+你是合同法法律问题分类器，请把问题分类为以下类别之一，并只返回英文类别名（不要解释）：
 
 - DEFINITION（概念/定义）
 - VALIDITY（成立/生效/无效/可撤销）
@@ -198,6 +198,7 @@ class QueryRouter:
 - BREACH_REMEDY（违约责任/违约金/赔偿/定金等救济）
 - TERMINATION（解除/终止/解除后果）
 - PROCEDURE（诉讼时效/举证/程序性问题）
+- OTHER（其他）
 
 问题：{question}
 """.strip()
@@ -212,6 +213,7 @@ class QueryRouter:
             "BREACH_REMEDY": (QueryType.BREACH_REMEDY, RoutingMode.RAG, 1.25),
             "TERMINATION": (QueryType.TERMINATION, RoutingMode.RAG, 1.2),
             "PROCEDURE": (QueryType.PROCEDURE, RoutingMode.GRAPH_AUGMENTED, 1.3),
+            "OTHER": (QueryType.OTHER, RoutingMode.RAG, 1),
         }
         qtype, mode, weight = mapping.get(label, (QueryType.PERFORMANCE, RoutingMode.RAG, 1.0))
         return Rule(name="llm_fallback", keywords=[], qtype=qtype, weight=weight, mode=mode, priority=0)
@@ -244,8 +246,8 @@ class QueryRouter:
 
         # Case 3: Default fallback
         return RoutingDecision(
-            query_type=QueryType.PERFORMANCE,  # 比 OTHER 更实用：大多数“合同问题”至少可走履行/一般规则
+            query_type=QueryType.OTHER,
             mode=RoutingMode.RAG,
             top_k_factor=1.0,
-            explain=f"Rule score low (score={score:.2f} < threshold={self.threshold:.2f}); fallback to PERFORMANCE/RAG.",
+            explain="Rule score low; fallback to default OTHER."
         )

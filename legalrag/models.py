@@ -63,6 +63,7 @@ class QueryType(str, Enum):
     BREACH_REMEDY = "breach_remedy"    # 违约责任、违约金、损害赔偿、定金、继续履行等救济
     TERMINATION = "termination"    # 合同解除、终止、解除后果
     PROCEDURE = "procedure"    # 诉讼时效、期间起算、中断中止、举证责任、程序性问题
+    OTHER = "other"   
 
 
 class RoutingMode(str, Enum):

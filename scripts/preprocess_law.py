@@ -122,7 +122,7 @@ def _finalize(st: State, out: List[Dict]) -> None:
             "section": st.section,
             "article_no": st.cur_no,     # normalized: 第...条
             "article_key": article_key,  # raw: 四百六十三 
-            "article_id":  normalize_article_no(article_no) , # 463
+            "article_id":  normalize_article_no(st.cur_no) , # 463
             "text": text,
             "source": st.source,
         }
