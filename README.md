@@ -11,6 +11,15 @@ It includes:
 - FastAPI backend and Gradio web UI
 - Scripts for preprocessing, index building and basic retrieval evaluation
 
+## License
+
+This project is licensed under the Apache License 2.0.
+
+This repository contains source code only and does not redistribute any
+third-party model weights. Users are responsible for complying with the
+licenses of models they choose to load (e.g. Qwen, BGE, OpenAI).
+
+
 **Legal-RAG** 是一个针对中国《民法典·合同编》的 **检索增强生成（RAG, Retrieval-Augmented Generation）系统**，可实现基于条文的问答、条文检索和多轮对话。
 
 
