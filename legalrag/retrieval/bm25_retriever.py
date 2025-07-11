@@ -11,6 +11,8 @@ import jieba
 from legalrag.config import AppConfig
 from legalrag.models import LawChunk
 from legalrag.utils.logger import get_logger
+from legalrag.retrieval.corpus_loader import load_chunks_from_dir
+
 
 logger = get_logger(__name__)
 
@@ -21,23 +23,27 @@ class BM25Retriever:
         rcfg = cfg.retrieval
         self.bm25_path = Path(rcfg.bm25_index_file)
         self.processed_path = Path(rcfg.processed_file)
+        self.processed_dir = rcfg.processed_dir
+        self.processed_glob = getattr(rcfg, "processed_glob", "*.jsonl")
 
         self.bm25: BM25Okapi | None = None
         self.chunks: List[LawChunk] = []
         self.corpus_tokens: List[List[str]] = []
 
     def build(self):
-        logger.info("[BM25] 构建索引")
-        self.chunks = []
-        with self.processed_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                obj = json.loads(line)
-                self.chunks.append(LawChunk(**obj))
+        logger.info("[BM25] 构建索引（扫描 processed_dir/*.jsonl）")
+
+        processed_dir = self.cfg.paths.processed_dir  # 与 PDFIngestor 输出对齐 :contentReference[oaicite:2]{index=2}
+        self.chunks = load_chunks_from_dir(processed_dir, pattern="*.jsonl")
+
         self.corpus_tokens = [list(jieba.cut(c.text)) for c in self.chunks]
         self.bm25 = BM25Okapi(self.corpus_tokens)
+
+        self.bm25_path.parent.mkdir(parents=True, exist_ok=True)
         with self.bm25_path.open("wb") as f:
             pickle.dump({"bm25": self.bm25, "chunks": self.chunks}, f)
-        logger.info(f"[BM25] 索引构建完成，共 {len(self.chunks)} 条")
+
+        logger.info(f"[BM25] saved -> {self.bm25_path} (docs={len(self.chunks)})")
 
     def load(self):
         if self.bm25 is not None:

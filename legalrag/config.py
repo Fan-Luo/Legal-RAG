@@ -34,11 +34,13 @@ class LLMConfig(BaseModel):
     base_url_env: str = "OPENAI_BASE_URL"
     max_context_tokens: int = 4096
     max_new_tokens: int = 512
-    temperature: float = 0.3
+    temperature: float = 0.86
     top_p: float = 0.9
 
 class RetrievalConfig(BaseModel):
     processed_file: str = "processed/contract_law.jsonl"
+    processed_dir: str = "data/processed"
+    processed_glob: str = "*.jsonl"
     faiss_index_file: str = "index/faiss.index"
     faiss_meta_file: str = "index/faiss_meta.jsonl"
     bm25_index_file: str = "index/bm25.pkl"

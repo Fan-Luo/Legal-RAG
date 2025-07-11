@@ -117,3 +117,6 @@ class VectorStore:
                 continue
             hits.append((self.chunks[idx], float(score)))
         return hits
+
+
+        

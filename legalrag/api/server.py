@@ -6,10 +6,16 @@ from fastapi.responses import JSONResponse
 
 from legalrag.config import AppConfig
 from legalrag.pipeline.rag_pipeline import RagPipeline
-from legalrag.pdf.parser import extract_text_from_pdf
 from legalrag.utils.logger import get_logger
+from legalrag.ingest.ingestor import PDFIngestor
+from pathlib import Path
+from legalrag.retrieval.incremental_indexer import IncrementalIndexer
+from legalrag.retrieval.bm25_retriever import BM25Retriever
+from filelock import FileLock
+from fastapi import BackgroundTasks
 
 logger = get_logger(__name__)
+
 
 app = FastAPI(title="Legal-RAG API", version="0.2.0")
 
@@ -48,6 +54,18 @@ def startup_event():
         logger.exception("[API] RAG Pipeline 初始化失败")
         raise RuntimeError("RAG Pipeline 初始化失败") from e
 
+
+@app.get("/")
+def root():
+    return JSONResponse(
+        {
+            "name": "Legal-RAG",
+            "status": "ok",
+            "docs": "/docs",
+            "health": "/health",
+        }
+    )
+
 # -----------------------
 # Health Check
 # -----------------------
@@ -67,16 +85,20 @@ async def rag_query(body: dict):
     if not question:
         raise HTTPException(status_code=400, detail="请求中缺少 'question' 字段")
 
-    try:
-        # 调用异步 LLM
-        ans = await pipeline.answer_async(question)
+    top_k = body.get("top_k", 10)
+    answer_style = body.get("answer_style", "专业")
 
-        # ans 是结构化 dict: text, mode, provider, context_snippet, hits
+    try:
+        ans = await pipeline.answer_async(
+            question,
+            top_k=int(top_k),
+            answer_style=answer_style,
+        )
         return {
             "question": question,
             "answer": ans["text"],
-            "mode": ans["mode"],                 # normal / degraded
-            "provider": ans["provider"],         # qwen-local / openai
+            "mode": ans["mode"],
+            "provider": ans["provider"],
             "context_snippet": ans.get("context_snippet", ""),
             "hits": [
                 {
@@ -95,31 +117,77 @@ async def rag_query(body: dict):
         logger.exception(f"RAG 查询失败: {e}")
         raise HTTPException(status_code=500, detail="RAG 查询失败")
 
+
 # -----------------------
 # PDF Ingest Endpoint
 # -----------------------
+
+INGEST_STATUS = {}  # doc_id -> {"faiss": "...", "added": int, "bm25": "...", "error": str|None}
+def faiss_index_job(jsonl_path: str, doc_id: str):
+    try:
+        added = IncrementalIndexer(cfg).add_jsonl(jsonl_path)
+        INGEST_STATUS.setdefault(doc_id, {})
+        INGEST_STATUS[doc_id].update({"faiss": "done", "added": int(added)})
+        logger.info(f"[FAISS] indexed doc_id={doc_id} added={added} jsonl={jsonl_path}")
+    except Exception as e:
+        INGEST_STATUS.setdefault(doc_id, {})
+        INGEST_STATUS[doc_id].update({"faiss": "failed", "error": str(e)})
+        logger.exception(f"[FAISS] indexing failed doc_id={doc_id} jsonl={jsonl_path}: {e}")
+
+def bm25_rebuild_job(doc_id: str):
+    try:
+        lock = FileLock(str(Path(cfg.retrieval.bm25_index_file).with_suffix(".lock")))
+        with lock:
+            BM25Retriever(cfg).build()
+        INGEST_STATUS.setdefault(doc_id, {})
+        INGEST_STATUS[doc_id].update({"bm25": "done"})
+        logger.info(f"[BM25] rebuild done doc_id={doc_id}")
+    except Exception as e:
+        INGEST_STATUS.setdefault(doc_id, {})
+        INGEST_STATUS[doc_id].update({"bm25": "failed", "error": str(e)})
+        logger.exception(f"[BM25] rebuild failed doc_id={doc_id}: {e}")
+
+
 @app.post("/ingest/pdf")
-async def ingest_pdf(file: UploadFile = File(...)):
+async def ingest_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="请上传 PDF 文件")
 
-    # 获取文件大小
-    file_size = len(await file.read())  
+    contents = await file.read()
+    MAX_FILE_SIZE_MB = 10
+    file_size = len(contents)
     if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"文件大小超过限制（最大 {MAX_FILE_SIZE_MB}MB）")
-    
+        raise HTTPException(status_code=400, detail=f"文件大小{file_size/ 1024 / 1024}MB 超过限制（最大 {MAX_FILE_SIZE_MB}MB）")
 
-    tmp_path = f"{cfg.paths.upload_dir}/{file.filename}"
+    tmp_path = Path(cfg.paths.upload_dir) / file.filename
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    with tmp_path.open("wb") as f:
+        f.write(contents)
+
     try:
-        content = await file.read()
-        with open(tmp_path, "wb") as f:
-            f.write(content)
-        text = extract_text_from_pdf(tmp_path, cfg)
+        ingestor = PDFIngestor(cfg)
+        result = ingestor.ingest_pdf_to_jsonl(tmp_path, law_name=f"用户上传PDF-{file.filename}")
+
+        # 把索引放到后台，不阻塞返回
+        if background_tasks is not None:
+            INGEST_STATUS[result.doc_id] = {"faiss": "scheduled", "added": 0, "bm25": "scheduled", "error": None}
+            background_tasks.add_task(faiss_index_job, result.jsonl_path, result.doc_id)
+            background_tasks.add_task(bm25_rebuild_job, result.doc_id)
+
+        # 立即返回 preview + 状态
         return {
             "filename": file.filename,
-            "text_preview": text[:800],
-            "length": len(text),
+            "doc_id": result.doc_id,
+            "num_chunks": result.num_chunks,
+            "text_preview": result.preview,     
+            "jsonl_path": result.jsonl_path,
+            "index_status": "scheduled",         
         }
     except Exception as e:
         logger.exception(f"PDF 解析失败: {e}")
         raise HTTPException(status_code=500, detail="PDF 解析失败")
+
+@app.get("/ingest/status/{doc_id}")
+def ingest_status(doc_id: str):
+    return INGEST_STATUS.get(doc_id, {"error": "not_found"})
+

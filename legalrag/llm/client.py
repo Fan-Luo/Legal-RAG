@@ -26,7 +26,7 @@ class LLMClient(BaseModel):
     model: Optional[AutoModelForCausalLM] = None
 
     max_new_tokens: int = 512
-    temperature: float = 0.3
+    temperature: float = 0.86
     top_p: float = 0.9
 
     class Config:

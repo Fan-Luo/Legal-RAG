@@ -2,78 +2,126 @@ from __future__ import annotations
 import gradio as gr
 from legalrag.config import AppConfig
 from legalrag.pipeline.rag_pipeline import RagPipeline
-from legalrag.pdf.parser import extract_text_from_pdf
 import asyncio
+from legalrag.ingest.pdf_ingestor import PDFIngestor
+from legalrag.retrieval.incremental_indexer import IncrementalIndexer
+from pathlib import Path
+import requests
+import os
 
 cfg = AppConfig.load()
 pipeline = RagPipeline(cfg)
+API_BASE = os.environ.get("LEGALRAG_API_BASE", "http://127.0.0.1:8000")
 
-# -----------------------
-# Async RAG 接口
-# -----------------------
-async def rag_interface(question: str, top_k: int, answer_style: str, chat_history):
-    """
-    处理问题，并返回 LLM 回答、条文列表、历史对话
-    """
-    # 调用 async LLM
-    ans = await pipeline.answer_async(question, top_k=top_k)
+def rag_interface(question: str, top_k: int, answer_style: str, history: list):
+    question = (question or "").strip()
+    if not question:
+        return "请先输入问题。", [], history
 
-    # 根据风格调整回答
-    response = ans["text"]
-    if answer_style == "简明" and len(response) > 500:
-        response = response[:500] + "..."
+    try:
+        payload = {
+            "question": question,
+            "top_k": int(top_k),
+            "answer_style": answer_style,
+        }
+        resp = requests.post(f"{API_BASE}/rag/query", json=payload, timeout=120)
+        if resp.status_code != 200:
+            return f"查询失败：{resp.status_code} {resp.text}", [], history
 
-    # 降级模式提示
-    if ans.get("mode") == "degraded":
-        response = f"当前处于降级模式，LLM 未完全可用。\n\n{response}"
+        data = resp.json()
+        answer_text = data.get("answer", "")
 
-    # 处理条文
-    hits_display = []
-    for h in ans.get("hits", []):
-        c = h.chunk
-        hits_display.append({
-            "rank": h.rank,
-            "score": round(h.score, 3),
-            "law_name": c.law_name,
-            "chapter": c.chapter or "",
-            "section": c.section or "",
-            "article_no": c.article_no,
-            "text": c.text,
-        })
+        # hits -> dataframe rows 
+        rows = []
+        for h in data.get("hits", []):
+            rows.append([
+                h.get("rank", ""),
+                round(float(h.get("score", 0.0)), 4),
+                h.get("law_name", ""),
+                h.get("chapter", ""),
+                h.get("section", ""),
+                h.get("article_no", ""),
+                (h.get("text", "") or "")[:500],
+            ])
 
-    # 更新历史记录
-    chat_history = chat_history or []
-    chat_history.append((question, response))
+        history = history or []
+        history.append((question, answer_text))
+        return answer_text, rows, history
 
-    return response, hits_display, chat_history
+    except Exception as e:
+        return f"查询异常：{e}", [], history
 
 # -----------------------
 # PDF 上传接口 
 # -----------------------
+
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
+def poll_index_status(doc_id: str):
+    if not doc_id:
+        return "索引状态：-", False  # 无 doc_id，不轮询
+
+    try:
+        r = requests.get(f"{API_BASE}/ingest/status/{doc_id}", timeout=10)
+        data = r.json() if r.status_code == 200 else {"error": r.text}
+
+        if data.get("error"):
+            return f"索引状态：{data.get('error')}", False
+
+        faiss = data.get("faiss", "unknown")
+        bm25 = data.get("bm25", "unknown")
+        added = data.get("added", 0)
+
+        text = f"索引状态：FAISS {faiss}（added={added}）；BM25 {bm25}"
+        done = (faiss == "done") and (bm25 == "done")
+        failed = (faiss == "failed") or (bm25 == "failed")
+
+        # done/failed 都停止轮询
+        return text + (f"\n错误：{data.get('error')}" if failed and data.get("error") else ""), (not (done or failed))
+
+    except Exception as e:
+        return f"索引状态：轮询异常：{e}", False
+
 def ingest_pdf(file):
-    """解析 PDF 并返回文本预览"""
-    if not file.name.endswith(".pdf"):
-        return "仅支持 PDF 文件", None, None
+    """
+    Gradio upload handler: send PDF to FastAPI /ingest/pdf.
+    Outputs: (answer_md, hits_df, chat_history)
+    """
+    if file is None:
+        return "请先选择一个 PDF 文件。", [], []
 
-    # 文件大小检查 
-    file.seek(0, 2)  # 移动到文件末尾
-    size = file.tell()
-    file.seek(0)     # 重置指针
+    contents = file.read()
+    size = len(contents)
+    if size > MAX_MB * 1024 * 1024:
+        raise HTTPException(400, f"文件过大 （{size/1024/1024:.2f} MB），最大仅支持 {MAX_UPLOAD_SIZE}MB")
 
-    if size > MAX_UPLOAD_SIZE:
-        return f"文件过大（{size/1024/1024:.2f} MB），最大仅支持 10 MB", None, None
 
-    # 保存上传的文件
-    tmp_path = f"{cfg.paths.upload_dir}/{file.name}"
-    with open(tmp_path, "wb") as f:
-        f.write(file.read())
+    # Gradio File 对象通常有 .name（本地临时路径）
+    path = getattr(file, "name", None)
+    if not path or not str(path).endswith(".pdf"):
+        return "仅支持 PDF 文件", [], []
 
-    # 解析 PDF
-    text = extract_text_from_pdf(tmp_path, cfg)
-    return f"PDF 上传成功，文本长度: {len(text)}", None, None
+    try:
+        with open(path, "rb") as f:
+            files = {"file": (os.path.basename(path), f, "application/pdf")}
+            resp = requests.post(f"{API_BASE}/ingest/pdf", files=files, timeout=120)
+        if resp.status_code != 200:
+            return f"上传失败：{resp.status_code} {resp.text}", [], []
 
+        data = resp.json()
+        doc_id = data.get("doc_id", "")
+        #  FastAPI 的返回字段：text_preview / doc_id / num_chunks / jsonl_path / indexed_chunks
+        msg = (
+            f"PDF 已解析（doc_id={doc_id}），共 {data.get('num_chunks')} 个片段。\n\n"
+            f"预览：\n{data.get('text_preview', '')}"
+        )
+
+        status = "索引状态：FAISS scheduled；BM25 scheduled（后台进行中）"
+        return msg, [], [], doc_id, status, True
+
+
+    except Exception as e:
+        return f"上传异常：{e}", [], []
 
 # -----------------------
 # Gradio UI
@@ -102,8 +150,11 @@ with gr.Blocks(theme=gr.themes.Default(primary_hue="blue")) as demo:
                     overflow="wrap",
                 )
             chat_history = gr.Chatbot(label="历史对话记录")
+            doc_id_state = gr.State(value="")
+            index_status_md = gr.Markdown("索引状态：-", interactive=False)
+            timer = gr.Timer(2, active=False)  # 默认不轮询
 
-    # Async click 
+
     submit_btn.click(
         fn=rag_interface,
         inputs=[question_input, top_k_slider, answer_style, chat_history],
@@ -114,9 +165,15 @@ with gr.Blocks(theme=gr.themes.Default(primary_hue="blue")) as demo:
     pdf_upload.upload(
         fn=ingest_pdf,
         inputs=[pdf_upload],
-        outputs=[answer_md, hits_df, chat_history],
+        outputs=[answer_md, hits_df, chat_history, doc_id_state, index_status_md, timer],
         show_progress=True,
     )
 
+    timer.tick(
+        fn=poll_index_status,
+        inputs=[doc_id_state],
+        outputs=[index_status_md, timer],  # 第二个输出控制 timer.active
+    )
+    
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, inbrowser=True, show_api=False, show_error=True)

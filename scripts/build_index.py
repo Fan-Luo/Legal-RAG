@@ -13,6 +13,7 @@ from legalrag.config import AppConfig
 from legalrag.models import LawChunk
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.utils.logger import get_logger
+from legalrag.retrieval.corpus_loader import load_chunks_from_dir
 
 logger = get_logger(__name__)
 
@@ -94,10 +95,8 @@ def build_faiss(cfg: AppConfig, chunks: List[LawChunk]):
 def main():
     cfg = AppConfig.load()
     rcfg = cfg.retrieval
-    processed = Path(rcfg.processed_file)
-    logger.info(f"Loading processed law from {processed}")
-    chunks = load_chunks(processed)
-    logger.info(f"Loaded {len(chunks)} law chunks")
+    chunks = load_chunks_from_dir(rcfg.processed_dir, rcfg.processed_glob)
+    logger.info(f"Loaded {len(chunks)} law chunks from {rcfg.processed_dir}/{rcfg.processed_glob}")
 
     # dense：BGE + FAISS
     build_faiss(cfg, chunks)
