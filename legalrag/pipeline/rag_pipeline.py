@@ -5,6 +5,7 @@ from typing import List, Optional
 
 import numpy as np
 import torch
+import re
 from transformers import AutoTokenizer, AutoModel
 
 from legalrag.config import AppConfig
@@ -359,6 +360,13 @@ class RagPipeline:
         if isinstance(raw_answer, dict):
             raw_answer = raw_answer.get("text") or raw_answer.get("answer") or str(raw_answer)
         raw_answer = str(raw_answer)
+
+        # Remove everything before '1. 结论' 
+        m = re.search(r"\b1\.\s*结论[:：]", raw_answer)
+        if not m:
+            raw_answer = raw_answer.strip()   
+        else:
+            raw_answer = raw_answer[m.start():].strip()
 
         return RagAnswer(
             question=question,

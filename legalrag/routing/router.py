@@ -209,7 +209,7 @@ class QueryRouter:
         mapping = {
             "DEFINITION": (QueryType.DEFINITION, RoutingMode.GRAPH_AUGMENTED, 1.1),
             "VALIDITY": (QueryType.VALIDITY, RoutingMode.GRAPH_AUGMENTED, 1.2),
-            "PERFORMANCE": (QueryType.PERFORMANCE, RoutingMode.RAG, 1.15),
+            "PERFORMANCE": (QueryType.PERFORMANCE, RoutingMode.RAG, 1),
             "BREACH_REMEDY": (QueryType.BREACH_REMEDY, RoutingMode.RAG, 1.25),
             "TERMINATION": (QueryType.TERMINATION, RoutingMode.RAG, 1.2),
             "PROCEDURE": (QueryType.PROCEDURE, RoutingMode.GRAPH_AUGMENTED, 1.3),
