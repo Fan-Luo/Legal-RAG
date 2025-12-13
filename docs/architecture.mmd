@@ -1,0 +1,57 @@
+flowchart TB
+
+%% =========================
+%% Offline Build
+%% =========================
+subgraph OFF["Offline Build"]
+  RAW["data/raw/<br/>minfadian.txt"] --> PRE["preprocess_law"]
+  PRE --> CHUNKS["processed/*.jsonl<br/>(LawChunk)"]
+end
+
+%% =========================
+%% Indexes & Graph (Artifacts)
+%% =========================
+subgraph ART["Indexes & Graph (Artifacts)"]
+  BI["build_index"]
+  BG["build_graph"]
+
+  FAISS["FAISS index<br/>+ meta"]
+  BM25["BM25 index<br/>(bm25.pkl)"]
+  GRAPH["law_graph"]
+end
+
+CHUNKS --> BI
+CHUNKS --> BG
+
+BI --> FAISS
+BI --> BM25
+BG --> GRAPH
+
+%% =========================
+%% Online PDF Ingestion
+%% =========================
+subgraph ING["Online PDF Ingestion"]
+  PDF["Uploaded PDF"] --> INGESTOR["PDFIngestor"]
+  INGESTOR --> TASKS["Background tasks:<br/>IncrementalIndexer + BM25 rebuild"]
+end
+
+%% dashed updates ONLY to artifacts
+TASKS -.-> FAISS
+TASKS -.-> BM25
+ 
+
+%% =========================
+%% Online Serving
+%% =========================
+subgraph SERV["Online Serving"]
+  UI["Gradio UI /<br/>HF Spaces"] --> API["FastAPI"]
+  API --> ROUTER["Router"]
+  ROUTER --> RETR["Retrieval Layer<br/>(HybridRetriever + law_graph)"]
+  RETR --> LLM["LLM"]
+  LLM --> ANSWER["Answer"]
+end
+
+%% read-only (dashed) from artifacts to retrieval
+FAISS -.-> RETR
+BM25  -.-> RETR
+GRAPH -.-> RETR
