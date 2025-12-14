@@ -361,8 +361,8 @@ class RagPipeline:
             raw_answer = raw_answer.get("text") or raw_answer.get("answer") or str(raw_answer)
         raw_answer = str(raw_answer)
 
-        # Remove everything before '1. 结论' 
-        m = re.search(r"\b1\.\s*结论[:：]", raw_answer)
+        # Remove everything before '结论：' 
+        m = re.search(r"\b结论[:：]", raw_answer)
         if not m:
             raw_answer = raw_answer.strip()   
         else:

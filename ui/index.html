@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Legal-RAG</title>
+    <style>
+      :root{
+        --bg: #f6f7fb;
+        --surface: #ffffff;
+        --text: #0f172a;
+        --muted: #64748b;
+        --border: #e5e7eb;
+        --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+        --accent: #2563eb;
+        --accent-weak: rgba(37,99,235,.12);
+        --radius: 16px;
+        --radius-sm: 12px;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+
+      *{ box-sizing: border-box; }
+      html, body { height: 100%; }
+      body{
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--text);
+        background: radial-gradient(1200px 800px at 10% 10%, #eef2ff 0%, rgba(238,242,255,0) 55%),
+                    radial-gradient(900px 700px at 90% 0%, #ecfeff 0%, rgba(236,254,255,0) 45%),
+                    var(--bg);
+      }
+
+      .app{
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(520px, 1fr) 420px;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      @media (max-width: 980px){
+        .app{ grid-template-columns: 1fr; }
+        .side{ order: 2; }
+        .chat{ order: 1; }
+      }
+
+      /* ---------- Cards ---------- */
+      .card{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .card-header{
+        padding: 18px 18px 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .card-title{
+        font-size: 16px;
+        font-weight: 750;
+        letter-spacing: -0.02em;
+      }
+
+      .card-subtitle{
+        padding: 0 18px 12px 18px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .card-body{
+        padding: 16px 18px 18px 18px;
+      }
+
+      .card-summary{
+        list-style: none;
+        cursor: pointer;
+        padding: 18px;
+        font-size: 16px;
+        font-weight: 750;
+        border-bottom: 1px solid var(--border);
+      }
+      details.card > summary::-webkit-details-marker{ display: none; }
+
+      .divider{
+        height: 1px;
+        background: var(--border);
+        margin: 14px 0;
+      }
+
+      /* ---------- Chat ---------- */
+      .chat{
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        gap: 12px;
+      }
+
+      .topbar{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 12px 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .brand{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .logo{
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-weight: 900;
+      }
+
+      .brand-text .title{
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.1;
+      }
+      .brand-text .subtitle{
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .topbar-actions{
+        display: flex;
+        gap: 10px;
+      }
+
+      .chat-list{
+        flex: 1;
+        min-height: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 16px;
+        overflow: auto;
+      }
+
+      .msg{
+        display: flex;
+        margin: 10px 0;
+      }
+      .msg.user{ justify-content: flex-end; }
+      .msg.assistant{ justify-content: flex-start; }
+
+      .bubble{
+        max-width: 78%;
+        border-radius: 18px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+      .msg.user .bubble{
+        background: #f1f5ff;
+        border-color: rgba(37,99,235,.25);
+      }
+      .role{
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .content{
+        font-size: 14.5px;
+        line-height: 1.55;
+        white-space: normal;
+      }
+
+      /* ---------- Composer ---------- */
+      .composer{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 12px;
+      }
+
+      .composer-inner{
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: end;
+      }
+
+      .composer-input{
+        width: 100%;
+        resize: none;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 12px 12px;
+        font-size: 14.5px;
+        line-height: 1.45;
+        outline: none;
+      }
+      .composer-input:focus{
+        border-color: rgba(37,99,235,.55);
+        box-shadow: 0 0 0 4px var(--accent-weak);
+      }
+
+      .composer-actions{
+        display: flex;
+        gap: 10px;
+      }
+
+      .composer-hint{
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      /* ---------- Buttons ---------- */
+      .btn{
+        height: 40px;
+        padding: 0 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      .btn:disabled{
+        opacity: .6;
+        cursor: not-allowed;
+      }
+      .btn-primary{
+        background: var(--accent);
+        border-color: rgba(37,99,235,.85);
+        color: #fff;
+      }
+      .btn-primary:hover{ filter: brightness(.98); }
+      .btn-ghost{
+        background: #fff;
+      }
+      .btn-ghost:hover{
+        background: #f8fafc;
+      }
+
+      /* ---------- Sidebar ---------- */
+      .side{
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        gap: 16px;
+      }
+
+      /* Toggle */
+      .toggle{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        color: var(--muted);
+        user-select: none;
+      }
+      .toggle input{
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+      }
+
+      /* Evidence list */
+      .evidence-wrap{
+        padding: 0 18px 18px 18px;
+        min-height: 180px;
+      }
+
+      .evidence-list{
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 10px;
+        max-height: 52vh;        /* Key: scroll container for the whole list */
+        overflow: auto;
+        background: #fff;
+      }
+
+      .evi{
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #fff;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+
+      .evi-sum{
+        cursor: pointer;
+        list-style: none;
+        padding: 14px 14px;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 10px;
+        font-weight: 800;
+        border-radius: 14px;
+      }
+      .evi-sum::-webkit-details-marker{ display: none; }
+
+      .evi-sum::before{
+        content: "▸";
+        margin-right: 5px;
+        color: var(--accent);
+        font-weight: 900;
+      }
+      .evi[open] .evi-sum::before{ content: "▾"; }
+
+      .evi-left{
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 16px;
+        width: 100%;
+      }
+
+      .evi-right{
+        color: var(--muted);
+        align-items: center;
+        font-weight: 750;
+        font-size: 15px;
+        white-space: nowrap;
+      }
+
+      .evi-body{
+        padding: 12px 14px 14px 14px;
+        border-top: 1px solid var(--border);
+        max-height: 220px;        /* Key: scroll inside expanded evidence */
+        overflow: auto;
+      }
+
+      .evi-text{
+        font-size: 14.5px;
+        line-height: 1.65;
+        color: var(--text);
+      }
+
+      /* Controls fields */
+      .field{
+        display: grid;
+        gap: 10px;
+      }
+      .field label{
+        font-size: 14px;
+        font-weight: 750;
+      }
+      .field input[type="range"]{
+        width: 100%;
+      }
+      .field select{
+        height: 44px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        padding: 0 12px;
+        font-size: 13px;
+        outline: none;
+      }
+      .field select:focus{
+        border-color: rgba(37,99,235,.55);
+        box-shadow: 0 0 0 4px var(--accent-weak);
+      }
+
+      .field-meta{
+        display: flex;
+        justify-content: flex-start;
+      }
+
+      .pill{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-weight: 800;
+        font-size: 12px;
+        background: #fff;
+        font-family: var(--mono);
+      }
+
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- Left: Chat -->
+      <section class="chat">
+        <header class="topbar">
+          <div class="brand">
+            <div class="logo">L</div>
+            <div class="brand-text">
+              <div class="title">Legal-RAG</div>
+              <div class="subtitle">Contract Law · RAG</div>
+            </div>
+          </div>
+
+          <div class="topbar-actions">
+            <button id="newChatBtn" class="btn btn-ghost" type="button">New chat</button>
+          </div>
+        </header>
+
+        <div id="chatList" class="chat-list" aria-live="polite"></div>
+
+        <form id="chatForm" class="composer" autocomplete="off">
+          <div class="composer-inner">
+            <textarea
+              id="question"
+              class="composer-input"
+              placeholder="输入你的法律问题…（Enter 发送，Shift+Enter 换行）"
+              rows="2"
+            ></textarea>
+            <div class="composer-actions">
+              <button id="sendBtn" class="btn btn-primary" type="submit">Send</button>
+              <button id="clearBtn" class="btn btn-ghost" type="button">Clear</button>
+            </div>
+          </div>
+          <div class="composer-hint">
+            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br>
+            Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.
+          </div>
+        </form>
+      </section>
+
+      <!-- Right: Sidebar -->
+      <aside class="side">
+        <!-- Evidence -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Evidences / 法律依据</div>
+            <label class="toggle">
+              <input id="showEvidence" type="checkbox" />
+              <span>Show</span>
+            </label>
+          </div>
+
+          <div id="evidenceHint" class="card-subtitle">Ask a question to see citations.</div>
+
+          <div id="evidenceWrap" class="evidence-wrap" style="display: none;">
+            <div id="evidenceList" class="evidence-list"></div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <details class="card" open>
+          <summary class="card-summary">Controls  / 控制面板</summary>
+          <div class="card-body">
+            <div class="field">
+              <label for="topK">参考法条数量 / Top-k references</label>
+              <input id="topK" type="range" min="3" max="20" value="10" />
+              <div class="field-meta">
+                <span id="topKVal" class="pill">10 articles</span>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="field">
+              <label for="style">Style / 回答风格</label>
+              <select id="style">
+                <option value="专业" selected>专业</option>
+                <option value="简洁">简洁</option>
+                <option value="通俗">通俗</option>
+              </select>
+            </div>
+          </div>
+        </details>
+      </aside>
+    </div>
+
+    <script>
+      /*
+        Legal-RAG UI (vanilla)
+        - Left: chat
+        - Right: Evidence (toggle + accordion) + Controls
+        Assumes the API is served from the same origin:
+          POST /rag/query {question, top_k, answer_style}
+      */
+
+      const $ = (sel) => document.querySelector(sel);
+
+      // ---------- DOM ----------
+      const chatList = $("#chatList");
+      const chatForm = $("#chatForm");
+      const questionInput = $("#question");
+      const sendBtn = $("#sendBtn");
+      const clearBtn = $("#clearBtn");
+      const newChatBtn = $("#newChatBtn");
+
+      const showEvidence = $("#showEvidence");
+      const evidenceHint = $("#evidenceHint");
+      const evidenceWrap = $("#evidenceWrap");
+      const evidenceList = $("#evidenceList");
+
+      const topK = $("#topK");
+      const topKVal = $("#topKVal");
+      const styleSel = $("#style");
+
+      // ---------- State ----------
+      const state = {
+        busy: false,
+        hasAsked: false,
+      };
+
+      // ---------- Helpers ----------
+      function escapeHtml(s) {
+        return String(s ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function scrollChatToBottom() {
+        chatList.scrollTop = chatList.scrollHeight;
+      }
+
+      function addMessage(role, text) {
+        const el = document.createElement("div");
+        el.className = `msg ${role}`;
+        el.innerHTML = `
+          <div class="bubble">
+            <div class="role">${role === "user" ? "You" : "Assistant"}</div>
+            <div class="content">${escapeHtml(text).replaceAll("\n", "<br/>")}</div>
+          </div>
+        `;
+        chatList.appendChild(el);
+        scrollChatToBottom();
+      }
+
+      function setBusy(on) {
+        state.busy = on;
+        sendBtn.disabled = on;
+        questionInput.disabled = on;
+        sendBtn.textContent = on ? "Thinking…" : "Send";
+      }
+
+      function trimToConclusion(answer) {
+        const s = String(answer ?? "").trim();
+        if (!s) return "";
+
+        // 已经是“结论：”开头，绝对不要再裁剪
+        if (/^结论\s*[:：]/.test(s)) return s;
+
+        // 找到第一次出现的“结论：”，从这里开始保留（包含后续所有内容）
+        const m = s.match(/(?:^|\n)\s*结论\s*[:：]/);
+        if (m && typeof m.index === "number") {
+          const out = s.slice(m.index).trim();
+
+          // 防止只剩“结论：”这一行（极端情况）
+          const afterColon = out.replace(/^结论\s*[:：]\s*/, "").trim();
+          if (afterColon.length >= 2) return out;
+
+          // 如果冒号后确实没内容，就别裁剪了
+          return s;
+        }
+
+        // 没有“结论：”就原样返回
+        return s;
+      }
+
+
+      function normalizeHits(hits) {
+        if (!Array.isArray(hits)) return [];
+        return hits.map((h, i) => ({
+          rank: Number(h.rank ?? i + 1),
+          score: Number(h.score ?? 0),
+          article: h.article_no ?? h.article ?? h.articleNo ?? "",
+          text: h.text ?? "",
+          law_name: h.law_name ?? "",
+        }));
+      }
+
+      function renderEvidence(hits) {
+        const rows = normalizeHits(hits);
+
+        if (!rows.length) {
+          evidenceHint.style.display = "block";
+          evidenceHint.textContent = "No citations returned.";
+          evidenceList.innerHTML = "";
+          return;
+        }
+
+        evidenceHint.style.display = "none";
+        evidenceList.innerHTML = "";
+
+        rows.forEach((h) => {
+          const det = document.createElement("details");
+          det.className = "evi";
+          det.open = false;
+
+          // Keep the list scannable: when one item expands, collapse the others.
+          det.addEventListener("toggle", () => {
+            if (!det.open) return;
+            evidenceList.querySelectorAll("details.evi[open]").forEach((d) => {
+              if (d !== det) d.open = false;
+            });
+          });
+
+          const sum = document.createElement("summary");
+          sum.className = "evi-sum";
+          sum.innerHTML = `
+            <span class="evi-left">[${escapeHtml(h.rank)}] ${escapeHtml(h.article || "条文")}</span>
+            <span class="evi-right">score&nbsp;${escapeHtml(h.score.toFixed(2))}</span>
+          `;
+
+          const body = document.createElement("div");
+          body.className = "evi-body";
+          body.innerHTML = `<div class="evi-text">${escapeHtml(h.text).replaceAll("\n", "<br/>")}</div>`;
+
+          det.appendChild(sum);
+          det.appendChild(body);
+          evidenceList.appendChild(det);
+        });
+      }
+
+      function setEvidenceVisibility(visible) {
+        evidenceWrap.style.display = visible ? "block" : "none";
+      }
+
+      function resetConversation() {
+        chatList.innerHTML = "";
+        addMessage(
+          "assistant",
+          "你好，我可以基于已索引的合同法条文回答问题。\n\n直接提问即可；需要扩展语料时再上传 PDF。"
+        );
+        state.hasAsked = false;
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = "Ask a question to see citations.";
+        evidenceList.innerHTML = "";
+        // Keep user preference for show/hide evidence
+      }
+
+      async function callRag(question) {
+        const payload = {
+          question,
+          top_k: Number(topK.value || 10),
+          answer_style: styleSel.value || "专业",
+        };
+
+        const res = await fetch("/rag/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+
+        return res.json();
+      }
+
+      // ---------- Events ----------
+      topK.addEventListener("input", () => {
+        topKVal.textContent = `${topK.value} articles`;
+      });
+
+      showEvidence.addEventListener("change", () => {
+        setEvidenceVisibility(showEvidence.checked);
+      });
+
+      // Enter to send; Shift+Enter newline
+      questionInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          chatForm.requestSubmit();
+        }
+      });
+
+      clearBtn.addEventListener("click", () => {
+        questionInput.value = "";
+        questionInput.focus();
+      });
+
+      newChatBtn.addEventListener("click", () => {
+        resetConversation();
+      });
+
+      chatForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (state.busy) return;
+
+        const q = (questionInput.value || "").trim();
+        if (!q) return;
+
+        addMessage("user", q);
+        questionInput.value = "";
+
+        // show evidence panel only if user opted in (keep preference)
+        setEvidenceVisibility(showEvidence.checked);
+
+        setBusy(true);
+        try {
+          const data = await callRag(q);
+
+          const answerRaw = String(data.answer ?? "");
+          const answer = trimToConclusion(answerRaw) || "（未返回答案）";
+          addMessage("assistant", answer);
+
+          // Render evidence (even if hidden, keep it ready)
+          renderEvidence(data.hits ?? []);
+          state.hasAsked = true;
+        } catch (err) {
+          addMessage("assistant", `请求失败：${err?.message || String(err)}`);
+        } finally {
+          setBusy(false);
+          questionInput.focus();
+        }
+      });
+
+      // ---------- Init ----------
+      resetConversation();
+      topKVal.textContent = `${topK.value} articles`;
+      setEvidenceVisibility(showEvidence.checked);
+
+    </script>
+  </body>
+</html>

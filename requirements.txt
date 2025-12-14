@@ -24,10 +24,10 @@ pdfplumber
 pdf2image
 pytesseract
 Pillow
-
+python-multipart
 
 # -------- UI --------
-gradio
+pyngrok
 streamlit
 httpx
 requests

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
+from typing import Any
 from legalrag.config import AppConfig
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.utils.logger import get_logger
@@ -13,11 +13,23 @@ from legalrag.retrieval.incremental_indexer import IncrementalIndexer
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from filelock import FileLock
 from fastapi import BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+import os
+from starlette.responses import FileResponse
+from fastapi.responses import HTMLResponse
+from starlette.staticfiles import StaticFiles
 
 logger = get_logger(__name__)
 
-
 app = FastAPI(title="Legal-RAG API", version="0.2.0")
+
+app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +40,27 @@ app.add_middleware(
 
 cfg = AppConfig.load()
 pipeline: RagPipeline | None = None
+
+def _get(obj: Any, key: str, default=None):
+    """Support dict + pydantic model + dataclass-like objects."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    # pydantic v1: .dict(); v2: .model_dump()
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump().get(key, default)
+        except Exception:
+            pass
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict().get(key, default)
+        except Exception:
+            pass
+    return getattr(obj, key, default)
+
+
 
 # -----------------------
 # Global Exception Handler
@@ -55,16 +88,6 @@ def startup_event():
         raise RuntimeError("RAG Pipeline 初始化失败") from e
 
 
-@app.get("/")
-def root():
-    return JSONResponse(
-        {
-            "name": "Legal-RAG",
-            "status": "ok",
-            "docs": "/docs",
-            "health": "/health",
-        }
-    )
 
 # -----------------------
 # Health Check
@@ -74,49 +97,56 @@ def health():
     return {"status": "ok"}
 
 # -----------------------
-# RAG Query Endpoint (async)
+# RAG Query Endpoint
 # -----------------------
 @app.post("/rag/query")
 async def rag_query(body: dict):
     if pipeline is None:
         raise HTTPException(status_code=503, detail="RAG Pipeline 未初始化")
 
-    question = body.get("question")
+    question = (body.get("question") or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="请求中缺少 'question' 字段")
 
-    top_k = body.get("top_k", 10)
+    top_k = int(body.get("top_k", 10))
     answer_style = body.get("answer_style", "专业")
 
     try:
-        ans = await pipeline.answer_async(
-            question,
-            top_k=int(top_k),
-            answer_style=answer_style,
-        )
+        ans = pipeline.answer(question, top_k=top_k)  # 如果你后面接 answer_style，可加进去
+
+        # RagAnswer.answer 通常是 str
+        answer_text = _get(ans, "answer", "")
+        # 有些实现可能叫 text
+        if not answer_text:
+            answer_text = _get(ans, "text", "")
+
+        hits = _get(ans, "hits", []) or []
+
+        hit_rows = []
+        for h in hits:
+            # h 可能是 RetrievalHit 对象或 dict
+            chunk = _get(h, "chunk", None)
+            hit_rows.append(
+                {
+                    "rank": _get(h, "rank", ""),
+                    "score": _get(h, "score", 0.0),
+                    "law_name": _get(chunk, "law_name", "") if chunk else "",
+                    "chapter": _get(chunk, "chapter", "") if chunk else "",
+                    "section": _get(chunk, "section", "") if chunk else "",
+                    "article_no": _get(chunk, "article_no", "") if chunk else "",
+                    "text": _get(chunk, "text", "") if chunk else "",
+                }
+            )
+
         return {
             "question": question,
-            "answer": ans["text"],
-            "mode": ans["mode"],
-            "provider": ans["provider"],
-            "context_snippet": ans.get("context_snippet", ""),
-            "hits": [
-                {
-                    "rank": h.rank,
-                    "score": h.score,
-                    "law_name": h.chunk.law_name,
-                    "chapter": h.chunk.chapter or "",
-                    "section": h.chunk.section or "",
-                    "article_no": h.chunk.article_no,
-                    "text": h.chunk.text,
-                }
-                for h in ans.get("hits", [])
-            ],
+            "answer": answer_text,
+            "hits": hit_rows,
         }
+
     except Exception as e:
         logger.exception(f"RAG 查询失败: {e}")
         raise HTTPException(status_code=500, detail="RAG 查询失败")
-
 
 # -----------------------
 # PDF Ingest Endpoint
