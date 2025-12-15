@@ -1,41 +1,102 @@
+---
+title: Legal-RAG
+emoji: "🤖"
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 8000
+pinned: true
+---
+
 # Legal-RAG
 
 
-[![HuggingFace Space](https://img.shields.io/badge/HuggingFace-Space-yellow)]
+[![HuggingFace Spaces](https://img.shields.io/badge/Space-Legal--RAG-blue?logo=huggingface)](https://huggingface.co/spaces/flora-l/Legal-RAG)
 [![Kaggle Notebook](https://img.shields.io/badge/Kaggle-Notebook-blue)]
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 > **Contract Law Retrieval-Augmented Generation (RAG) system**  
-> 针对中国《民法典·合同编》的条文检索、问答与推理系统
+A production-grade Retrieval-Augmented Generation (RAG) system for Chinese Contract Law (《民法典·合同编》)
+Focused on correctness, traceability, and engineering clarity — not legal advice.
 
-**Legal-RAG** 支持条文问答、多轮对话、PDF 上传解析，可用于法律研究、教学演示与原型系统搭建。
+ 
 
----
+## What is Legal-RAG?
+Legal-RAG is an open-source, end-to-end legal information retrieval and reasoning system designed around the Chinese Civil Code – Contract Book.
 
-## ✨ Features
-
-* 📚 法条预处理 Legal text preprocessing → JSONL
-* 🔍 混合检索 Hybrid retrieval：FAISS 向量 + BM25 精确匹配
-- 🤖 **LLM 回答**
-  - 本地 **Qwen**（推荐）
-  - 可选 **OpenAI API** （需要提供OpenAI API Key, 用完可自行删除）
-* 🧠 **法律知识路由（Routing）** 
-- 🌐 **服务与界面**
-  - FastAPI 后端 API
-  - Gradio Web UI（多轮问答、条文展示、PDF 上传）
-* 🛠 脚本支持
-  - 法条预处理 / 索引构建 / 检索评估
+It demonstrates how to build a law-aware RAG system that is:
+- grounded in explicit statutory text
+- engineered with retrieval transparency
+- structured for future extensibility (graph / routing / SaaS-ready)
 
 
----  
+## 🤗 Hugging Face Spaces Demo (Online)
 
-## 🧩 System Architecture
+This project provides a fully functional online demo deployed on Hugging Face Spaces.
+### Live Demo
+👉 https://huggingface.co/spaces/flora-l/Legal-RAG 
+
+In the Hugging Face Space:
+  **Settings → Variables and secrets**
+
+  Set:
+  
+    - OPENAI_API_KEY (required)
+    - OPENAI_MODEL (optional, e.g. gpt-4o-mini)
+
+## Features
+
+### Law-aware RAG 
+- Explicit article-level chunking
+- Law-specific metadata (chapter / section / article number)
+- Retrieval results are inspectable and auditable
+
+### Hybrid Retrieval, Done Properly
+- Dense retrieval: FAISS
+- Sparse retrieval: BM25
+- Weighted fusion via HybridRetriever 
+
+### Query Routing & Graph Awareness
+- Lightweight law_graph for structural reasoning
+- Router decides between:
+  - pure retrieval
+  - graph-assisted RAG
+- Clear extension point for richer legal knowledge graphs
+
+### Online PDF Ingestion (Incremental Indexing)
+- Upload PDFs → parse → chunk → JSONL
+- Incremental FAISS add
+- BM25 rebuild in background
+
+### Engineering-first Design
+- Clear module boundaries
+- Deterministic data flow
+- Minimal magic, maximal readability
+- SaaS-compatible architecture without being a SaaS
+
+ 
+
+## System Architecture
+The system is organized into four clearly separated layers:
+
+1. Offline Build
+  Law text preprocessing, index construction, graph building
+
+2. Index Artifacts
+  FAISS, BM25, and law_graph as immutable read models
+
+3. Online Ingestion
+  PDF upload → background incremental indexing
+
+4. Online Serving (RAG + Routing)
+  FastAPI + RagPipeline + Router + LLM
+
+See the architecture diagram for the full data flow.
 
 <img src="docs/architecture.png" alt="Legal-RAG Architecture" width="800"/>
 
----
-
-## 🚀 Quickstart 
+ 
+## Quickstart (Local)
 ### 1. Clone & install
 ```bash
 git clone https://github.com/Fan-Luo/Legal-RAG.git
@@ -45,50 +106,38 @@ pip install -r requirements.txt
 
 ### 2.Prepare law data & build index
 ```bash
-# 《民法典》文本位于 data/raw/minfadian.txt
-#  可替换为你需要的其他法律文本
-
-# 预处理为 JSONL
+# preprocess law text into structured JSONL
 python -m scripts.preprocess_law
 
-# 构建 FAISS + BM25 索引
+# build FAISS + BM25 indexes
 python -m scripts.build_index
+
+# build law_graph
+python -m scripts.build_graph
 ````
 ### 3. Start API service
 ```bash
-uvicorn legalrag.api.server:app --host 0.0.0.0 --port 8000
+python -m uvicorn legalrag.api.server:app --host 127.0.0.1 --port 8000 
 ````
 
-### 4. Launch Gradio Demo
-```bash
-python ui/gradio_app.py
-```
-支持：
-  - 多轮法律问答
-  - 条文折叠展示
-  - PDF 上传解析（自动增量索引）
+### 4. Launch Demo
+visit http://127.0.0.1:8000/ or http://127.0.0.1:8000/ui/
+ 
 
----
-
-## 🧪 Example
-
-### Python 运行示例
+## Example
 
 ```python
 from legalrag.config import AppConfig
 from legalrag.pipeline.rag_pipeline import RagPipeline
 
-cfg = AppConfig.load(None)
+cfg = AppConfig.load()
 pipeline = RagPipeline(cfg)
 
 question = "合同生效后，如果对价款和履行地点没有约定，应当如何处理？"
 ans = pipeline.answer(question)
 
-print("Question:", question)
-print("Answer:", ans.answer)
+print(ans.answer)
 ```
-
-**示例回答**
 
 > 1. 结论：
 >   - 经过全面分析与理解，我们认为，当合同对价款和履行地点没有约定时，合同生效后，当事人可以根据合同相关条款或者交易习惯确定支付价款和履行地点。这体现了合同自由的原则和诚实信用的基本精神。
@@ -106,29 +155,30 @@ print("Answer:", ans.answer)
 >   - （次要参考）
 >       - 第六百二十七条
 
----
+ 
+
+
+## LLM Backends & Cost Model
+Supported backends:
+- Local LLM (Qwen series, need GPU and enough memory)
+- OpenAI-compatible API (need to provide OpenAI API key)
+
+Important design choice
+
+- No API key is collected via UI
+- LLM keys are read only from environment variables
+- If no key is provided and no local model loaded, the system gracefully degrades
+
 
 ## 📂 Project Structure
 
 ```
 Legal-RAG/
-├── README.md
-├── LICENSE
-├── pyproject.toml
-├── requirements.txt
-├── app.py                         # Hugging Face Spaces entry
-├── .gitignore
 │
 ├── legalrag/
 │   ├── __init__.py
 │   ├── config.py                  # AppConfig / Paths / LLM / Retrieval
 │   ├── models.py                  # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
-│   │
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── logger.py              # 日志 
-│   │   └── text.py                # 文本清洗 / 正则工具
-│   │
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   └── client.py              # Qwen / OpenAI LLMClient（async-safe）
@@ -144,7 +194,7 @@ Legal-RAG/
 │   │
 │   ├── routing/
 │   │   ├── __init__.py
-│   │   └── router.py              # QueryType + Graph/RAG 建议
+│   │   └── router.py              # QueryType + Graph/RAG Suggestions
 │   │
 │   ├── pdf/
 │   │   ├── __init__.py
@@ -156,22 +206,27 @@ Legal-RAG/
 │   │
 │   ├── pipeline/
 │   │   ├── __init__.py
-│   │   └── rag_pipeline.py        # Graph-aware RAG 核心推理链
+│   │   └── rag_pipeline.py        # Graph-aware RAG Core Inference
 │   │
 │   ├── prompts/
 │   │   └── legal_rag_prompt.txt   # Prompt 
+│   │
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── logger.py             
+│   │   └── text.py                
 │   │
 │   └── api/
 │       ├── __init__.py
 │       └── server.py              # FastAPI（/rag/query, /, ingest/pdf）
 │
 ├── ui/
-│   └── gradio_app.py              # Gradio / HF Spaces UI
+│   └── index.html
 │
 ├── scripts/
-│   ├── preprocess_law.py          # 法条解析 → LawChunk JSONL
-│   ├── build_index.py             # FAISS + BM25 索引构建
-│   ├── build_graph.py             # law_graph / legal_kg 构建
+│   ├── preprocess_law.py          # parse law → LawChunk JSONL
+│   ├── build_index.py             # FAISS + BM25 indexes
+│   ├── build_graph.py             # law_graph / legal_kg  
 │   └── evaluate_retrieval.py      # Hit@K / MRR / nDCG
 │
 ├── notebooks/
@@ -182,36 +237,56 @@ Legal-RAG/
 │   └── 05_rag_answer_eval.ipynb
 │
 ├── data/
-│   ├── raw/
-│   │   └── minfadian.txt
+│   ├── raw/                         
+│   │   └── minfadian.txt            
 │   └── eval/
 │       └── contract_law_qa.jsonl
 ├── docs/
 │   ├── architecture.mmd
 │   └── architecture.png
-└── tests/
-    ├── test_router.py
-    └── test_retrieval.py
-
+├── tests/
+│   ├── test_router.py
+│   └── test_retrieval.py
+├── README.md
+├── README-zh.md
+├── LICENSE
+├── pyproject.toml
+├── requirements.txt
+├── app.py                           # Hugging Face Spaces entry
+├── Dockerfile
+└── .gitignore                       
 
 ```
 
----
+ 
 
-## 💡 Notes & Extensions
+## Extensibility
 
-* 可扩展方向：
-  - 更复杂的法律知识图谱
-  - 高级查询路由 / 多模型融合
-  - 支持其他法律领域或多语种
-* PDF 上传建议使用可复制文本的 PDF，提高解析准确率
-* 本地 LLM（Qwen / BGE）建议使用 GPU 或充足显存；OpenAI API 为可选方案
+Legal-RAG is intentionally structured to support:
 
----
+- richer legal knowledge graphs
+- multi-document reasoning
+- multi-tenant isolation
+- BYOK (Bring Your Own Key) SaaS models
 
-## 📜 License
+These are architectural affordances, not product promises.
 
+
+
+## Who is this project for?
+This repository is intended for:
+- Engineers exploring RAG system design
+- Researchers working on legal NLP / AI + law
+- Practitioners interested in traceable AI systems
+- Candidates demonstrating architecture-level thinking
+
+> ⚠️ This project provides legal information assistance for educational and research purposes only and does not constitute legal advice. Users should not rely on this project as a substitute for professional legal counsel. The authors and contributors disclaim any liability for any direct or indirect consequences arising from the use of this project.
+
+
+
+
+## License
 Apache License 2.0
 
-本仓库仅包含源码，不包含第三方模型权重。用户需自行遵守所使用模型的许可证（如 Qwen、BGE、OpenAI 等）。
-
+This repository contains source code only.
+Users are responsible for complying with the licenses of any models or APIs they choose to integrate.
