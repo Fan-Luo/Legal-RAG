@@ -46,11 +46,12 @@ class HybridRetriever:
         items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:k]
         hits: List[RetrievalHit] = []
         for rank, (cid, score) in enumerate(items, start=1):
-            hits.append(
-                RetrievalHit(
-                    chunk=source[cid],
-                    score=float(score),
-                    rank=rank,
+            if float(score) >= self.cfg.retrieval.min_final_score:
+                hits.append(
+                    RetrievalHit(
+                        chunk=source[cid],
+                        score=float(score),
+                        rank=rank,
+                    )
                 )
-            )
         return hits

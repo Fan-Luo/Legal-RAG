@@ -31,8 +31,8 @@ class LLMConfig(BaseModel):
     provider: str = "qwen-local"   # "qwen-local" | "openai"
 
     # 默认值 
-    model: str = "Qwen/Qwen2-1.5B-Instruct"
-    qwen_model: str = "Qwen/Qwen2-1.5B-Instruct"
+    model: str = "Qwen/Qwen2.5-3B-Instruct"
+    qwen_model: str = "Qwen/Qwen2.5-3B-Instruct"
     openai_model: str = "gpt-4o-mini"
 
     # 可选 env 覆盖 
@@ -61,6 +61,7 @@ class RetrievalConfig(BaseModel):
     dense_weight: float = 0.6
 
     embedding_model: str = "BAAI/bge-base-zh-v1.5"  # BAAI/bge-m3 for better performance
+    min_final_score: float = 1
 
 
 class PDFConfig(BaseModel):

@@ -17,12 +17,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from starlette.responses import FileResponse
-from fastapi.responses import HTMLResponse
-from starlette.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse 
+import asyncio 
 
 logger = get_logger(__name__)
 
 app = FastAPI(title="Legal-RAG API", version="0.2.0")
+
+RAG = None
+READY = False
+INIT_ERROR = None
 CFG: AppConfig | None = None
 pipeline: RagPipeline | None = None
 
@@ -38,7 +42,7 @@ def load_cfg() -> AppConfig:
     if openai_model:
         cfg.llm.openai_model = openai_model
 
-    # 2) provider 决策：有 key 就 openai，否则 qwen-local
+    # 2) provider：有 key 就 openai，否则 qwen-local
     key_env = cfg.llm.api_key_env
     openai_key = os.getenv(key_env, "").strip()
     if openai_key:
@@ -55,12 +59,51 @@ def load_cfg() -> AppConfig:
     return cfg
 
 
-app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
+ 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # /app
+UI_PATH = BASE_DIR / "ui"
+ 
+def build_rag_pipeline():
+    global CFG, pipeline
+    try:
+        logger.info("[API] 初始化 RAG Pipeline...")
+        CFG = load_cfg()
+        pipeline = RagPipeline(CFG)
+        logger.info("[API] RAG Pipeline 初始化完成")
+    except Exception as e:
+        logger.exception("[API] RAG Pipeline 初始化失败")
+        raise RuntimeError("RAG Pipeline 初始化失败") from e
 
+async def init_rag_background():
+    global RAG, READY, INIT_ERROR
+    try:
+        logger.info("[API] Background init: start")
+        RAG = await asyncio.to_thread(build_rag_pipeline)
+        READY = True
+        logger.info("[API] Background init: done")
+    except Exception as e:
+        INIT_ERROR = repr(e)
+        logger.exception("[API] Background init failed")
+ 
+print(f"[boot] UI_PATH={UI_PATH} exists={UI_PATH.exists()}")
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+if UI_PATH.exists():
+    # Mount static files to a dedicated path /ui/
+    # Note: We remove the 'html=True' here as it's not the root path
+    app.mount(
+        "/ui",
+        StaticFiles(directory=str(UI_PATH), html=True),
+        name="ui_static",
+    )
+
+    # Add back the explicit root route to serve index.html 
+    # The root route must return the index file which is now in the /ui directory.
+    @app.get("/", include_in_schema=False)
+    def root():
+        # Use a path pointing to index.html in the UI directory
+        return FileResponse(str(UI_PATH / "index.html"))
+
+    print("[boot] Root path configured to serve index.html, static files at /ui/.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,18 +149,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Startup Event
 # -----------------------
 @app.on_event("startup")
-def startup_event():
-    global CFG, pipeline
-    try:
-        logger.info("[API] 初始化 RAG Pipeline...")
-        CFG = load_cfg()
-        pipeline = RagPipeline(CFG)
-        logger.info("[API] RAG Pipeline 初始化完成")
-    except Exception as e:
-        logger.exception("[API] RAG Pipeline 初始化失败")
-        raise RuntimeError("RAG Pipeline 初始化失败") from e
-
-
+async def startup_event():
+     asyncio.create_task(init_rag_background())
 
 
 # -----------------------
@@ -125,13 +158,16 @@ def startup_event():
 # -----------------------
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    # Always 200 so Spaces marks the workload healthy
+    return {"status": "ok", "ready": READY, "error": INIT_ERROR}
 
 # -----------------------
 # RAG Query Endpoint
 # -----------------------
 @app.post("/rag/query")
 async def rag_query(body: dict):
+    if not READY:
+        raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
     if pipeline is None:
         raise HTTPException(status_code=503, detail="RAG Pipeline 未初始化")
 
