@@ -23,6 +23,37 @@ from starlette.staticfiles import StaticFiles
 logger = get_logger(__name__)
 
 app = FastAPI(title="Legal-RAG API", version="0.2.0")
+CFG: AppConfig | None = None
+pipeline: RagPipeline | None = None
+
+def load_cfg() -> AppConfig:
+    cfg = AppConfig.load()
+
+    # 1) 读取 env 
+    qwen_model = os.getenv(cfg.llm.qwen_model_env, "").strip()
+    if qwen_model:
+        cfg.llm.qwen_model = qwen_model
+
+    openai_model = os.getenv(cfg.llm.openai_model_env, "").strip()
+    if openai_model:
+        cfg.llm.openai_model = openai_model
+
+    # 2) provider 决策：有 key 就 openai，否则 qwen-local
+    key_env = cfg.llm.api_key_env
+    openai_key = os.getenv(key_env, "").strip()
+    if openai_key:
+        cfg.llm.provider = "openai"
+        chosen = cfg.llm.openai_model
+    else:
+        cfg.llm.provider = "qwen-local"
+        chosen = cfg.llm.qwen_model
+
+    # 3) 将“最终生效模型”写回一个统一字段 
+    cfg.llm.model = chosen
+
+    logger.info(f"[LLM] provider={cfg.llm.provider}, model={cfg.llm.model}")
+    return cfg
+
 
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
 
@@ -38,8 +69,6 @@ app.add_middleware(
     allow_methods=["*"],
 )
 
-cfg = AppConfig.load()
-pipeline: RagPipeline | None = None
 
 def _get(obj: Any, key: str, default=None):
     """Support dict + pydantic model + dataclass-like objects."""
@@ -78,14 +107,16 @@ async def global_exception_handler(request: Request, exc: Exception):
 # -----------------------
 @app.on_event("startup")
 def startup_event():
-    global pipeline
+    global CFG, pipeline
     try:
         logger.info("[API] 初始化 RAG Pipeline...")
-        pipeline = RagPipeline(cfg)
+        CFG = load_cfg()
+        pipeline = RagPipeline(CFG)
         logger.info("[API] RAG Pipeline 初始化完成")
     except Exception as e:
         logger.exception("[API] RAG Pipeline 初始化失败")
         raise RuntimeError("RAG Pipeline 初始化失败") from e
+
 
 
 
@@ -155,7 +186,7 @@ async def rag_query(body: dict):
 INGEST_STATUS = {}  # doc_id -> {"faiss": "...", "added": int, "bm25": "...", "error": str|None}
 def faiss_index_job(jsonl_path: str, doc_id: str):
     try:
-        added = IncrementalIndexer(cfg).add_jsonl(jsonl_path)
+        added = IncrementalIndexer(CFG).add_jsonl(jsonl_path)
         INGEST_STATUS.setdefault(doc_id, {})
         INGEST_STATUS[doc_id].update({"faiss": "done", "added": int(added)})
         logger.info(f"[FAISS] indexed doc_id={doc_id} added={added} jsonl={jsonl_path}")
@@ -166,9 +197,9 @@ def faiss_index_job(jsonl_path: str, doc_id: str):
 
 def bm25_rebuild_job(doc_id: str):
     try:
-        lock = FileLock(str(Path(cfg.retrieval.bm25_index_file).with_suffix(".lock")))
+        lock = FileLock(str(Path(CFG.retrieval.bm25_index_file).with_suffix(".lock")))
         with lock:
-            BM25Retriever(cfg).build()
+            BM25Retriever(CFG).build()
         INGEST_STATUS.setdefault(doc_id, {})
         INGEST_STATUS[doc_id].update({"bm25": "done"})
         logger.info(f"[BM25] rebuild done doc_id={doc_id}")
@@ -189,13 +220,13 @@ async def ingest_pdf(file: UploadFile = File(...), background_tasks: BackgroundT
     if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
         raise HTTPException(status_code=400, detail=f"文件大小{file_size/ 1024 / 1024}MB 超过限制（最大 {MAX_FILE_SIZE_MB}MB）")
 
-    tmp_path = Path(cfg.paths.upload_dir) / file.filename
+    tmp_path = Path(CFG.paths.upload_dir) / file.filename
     tmp_path.parent.mkdir(parents=True, exist_ok=True)
     with tmp_path.open("wb") as f:
         f.write(contents)
 
     try:
-        ingestor = PDFIngestor(cfg)
+        ingestor = PDFIngestor(CFG)
         result = ingestor.ingest_pdf_to_jsonl(tmp_path, law_name=f"用户上传PDF-{file.filename}")
 
         # 把索引放到后台，不阻塞返回

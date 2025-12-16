@@ -29,9 +29,20 @@ class PathsConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     provider: str = "qwen-local"   # "qwen-local" | "openai"
+
+    # 默认值 
     model: str = "Qwen/Qwen2-1.5B-Instruct"
+    qwen_model: str = "Qwen/Qwen2-1.5B-Instruct"
+    openai_model: str = "gpt-4o-mini"
+
+    # 可选 env 覆盖 
+    qwen_model_env: str = "QWEN_MODEL"
+    openai_model_env: str = "OPENAI_MODEL"
+
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
+    max_context_tokens: int = 4096
+
     max_context_tokens: int = 4096
     max_new_tokens: int = 512
     temperature: float = 0.86

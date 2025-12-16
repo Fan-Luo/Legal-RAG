@@ -57,8 +57,12 @@ class LLMClient(BaseModel):
                 self.client = None
             else:
                 self.client = OpenAI(api_key=api_key, base_url=base_url)
-                logger.info("[LLM] OpenAI client 初始化完成")
-
+                logger.info(
+                    "[LLM] Using OpenAI: model=%s, base_url=%s, key_env=%s",
+                    self.model_name,
+                    base_url or "default",
+                    llm_cfg.api_key_env,
+                )
         elif self.provider == "qwen-local":
             model_path = self.model_name
             try:
@@ -80,15 +84,17 @@ class LLMClient(BaseModel):
                     self.model.to("cpu")
 
                 self.model.eval()
-                logger.info("[LLM] Qwen 模型加载成功")
+                logger.info(f"[LLM] Qwen 模型 {model_path} 加载成功")
 
             except Exception as e:
                 logger.exception(f"[LLM] Qwen 模型加载失败，进入降级模式: {e}")
                 self.tokenizer = None
                 self.model = None
                 self.client = None
+
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
+
 
     # -----------------------
     # 同步接口 
