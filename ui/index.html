@@ -455,27 +455,25 @@
           </div>
         </div>
 
-        <!-- Controls -->
+        <!-- Upload -->
         <details class="card" open>
-          <summary class="card-summary">Controls  / 控制面板</summary>
+          <summary class="card-summary">Upload PDF  / 上传文件</summary>
           <div class="card-body">
             <div class="field">
-              <label for="topK">参考法条数量 / Top-k references</label>
-              <input id="topK" type="range" min="3" max="20" value="10" />
-              <div class="field-meta">
-                <span id="topKVal" class="pill">10 articles</span>
+              <div class="card-subtitle" style="margin: 0; padding: 0;">上传 PDF 扩展语料 / Upload a PDF to extend corpus</div>
+              <input id="pdfFile" type="file" accept="application/pdf" />
+              <div class="field-meta"> 
+                <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;">Max 10MB</span>
               </div>
             </div>
 
-            <div class="divider"></div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button id="uploadBtn" class="btn" type="button">Upload</button>
+              <button id="clearUploadBtn" class="btn btn-ghost" type="button">Clear</button>
+            </div>
 
-            <div class="field">
-              <label for="style">Style / 回答风格</label>
-              <select id="style">
-                <option value="专业" selected>专业</option>
-                <option value="简洁">简洁</option>
-                <option value="通俗">通俗</option>
-              </select>
+            <div class="field" style="margin-top:12px;">
+              <div id="uploadStatus" class="muted" style="white-space:pre-wrap;"></div>
             </div>
           </div>
         </details>
@@ -493,7 +491,7 @@
 
       const $ = (sel) => document.querySelector(sel);
 
-      // ---------- DOM ----------
+      
       const chatList = $("#chatList");
       const chatForm = $("#chatForm");
       const questionInput = $("#question");
@@ -506,15 +504,23 @@
       const evidenceWrap = $("#evidenceWrap");
       const evidenceList = $("#evidenceList");
 
-      const topK = $("#topK");
-      const topKVal = $("#topKVal");
-      const styleSel = $("#style");
 
-      // ---------- State ----------
+      const pdfFile = $("#pdfFile");
+      const uploadBtn = $("#uploadBtn");
+      const clearUploadBtn = $("#clearUploadBtn");
+      const uploadStatus = $("#uploadStatus");
+
+      const pdfHint = document.getElementById("pdfHint");
+      const pdfFile = document.getElementById("pdfFile");  
+
       const state = {
         busy: false,
         hasAsked: false,
       };
+
+      const MAX_MB = 10;
+      const MAX_BYTES = MAX_MB * 1024 * 1024;
+
 
       // ---------- Helpers ----------
       function escapeHtml(s) {
@@ -525,6 +531,38 @@
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#039;");
       }
+      async function uploadPdfFile(file) {
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+
+        const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+        return res.json();
+      }
+
+      async function pollIngestStatus(docId, { intervalMs = 1500, maxTries = 120 } = {}) {
+        for (let i = 0; i < maxTries; i++) {
+          const res = await fetch(`/ingest/status/${encodeURIComponent(docId)}`, { method: "GET" });
+          if (res.ok) {
+            const st = await res.json();
+            if (st?.error && st.error !== null && st.error !== "not_found") return st;
+            const faissDone = st?.faiss === "done";
+            const bm25Done = st?.bm25 === "done";
+            if (faissDone && bm25Done) return st;
+            uploadStatus.textContent =
+              `Indexing...\n` +
+              // `doc_id: ${docId}\n` +
+              // `faiss: ${st?.faiss || "unknown"} \n` +
+              // `bm25: ${st?.bm25 || "unknown"}\n`;
+          }
+          await new Promise((r) => setTimeout(r, intervalMs));
+        }
+        return { error: "timeout" };
+      }
+
 
       function scrollChatToBottom() {
         chatList.scrollTop = chatList.scrollHeight;
@@ -633,12 +671,21 @@
         evidenceWrap.style.display = visible ? "block" : "none";
       }
 
+      function updatePdfHintVisibility() {
+        const f = pdfFile?.files?.[0];
+        if (!f) {
+          pdfHint.style.display = "none";
+          return;
+        }
+        pdfHint.style.display = (f.size > MAX_BYTES) ? "inline-flex" : "none";
+      }
+      
+      function hidePdfHint() {
+        pdfHint.style.display = "none";
+      }
+
       function resetConversation() {
         chatList.innerHTML = "";
-        addMessage(
-          "assistant",
-          "你好，我可以基于已索引的合同法条文回答问题。\n\n直接提问即可；需要扩展语料时再上传 PDF。"
-        );
         state.hasAsked = false;
         evidenceHint.style.display = "block";
         evidenceHint.textContent = "Ask a question to see citations.";
@@ -649,13 +696,13 @@
       async function callRag(question) {
         const payload = {
           question,
-          top_k: Number(topK.value || 10),
-          answer_style: styleSel.value || "专业",
+          top_k: 10,
+          answer_style: "专业",
         };
 
         const res = await fetch("/rag/query", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: (() => { const h = { "Content-Type": "application/json" }; const k = sessionStorage.getItem("OPENAI_API_KEY"); if (k) h["X-OpenAI-Api-Key"] = k; return h; })(),
           body: JSON.stringify(payload),
         });
 
@@ -668,13 +715,61 @@
       }
 
       // ---------- Events ----------
-      topK.addEventListener("input", () => {
-        topKVal.textContent = `${topK.value} articles`;
+
+      uploadBtn?.addEventListener("click", async () => {
+        const file = pdfFile?.files?.[0];
+        if (!file) {
+          uploadStatus.textContent = "请选择一个 PDF 文件 / Please choose a PDF file.";
+          return;
+        }
+        if (!/\.pdf$/i.test(file.name)) {
+          uploadStatus.textContent = "仅支持 PDF 文件 / PDF only.";
+          return;
+        }
+        uploadBtn.disabled = true;
+        clearUploadBtn.disabled = true;
+        uploadStatus.textContent = `Uploading: ${file.name} ...`;
+
+        try {
+          const data = await uploadPdfFile(file);
+          uploadStatus.textContent =
+            `Uploaded: ${data.filename}\n` +
+            `doc_id: ${data.doc_id}\n` +
+            `chunks: ${data.num_chunks}\n\n` +
+            `Preview:\n${data.text_preview || ""}\n\n` +
+            `Indexing scheduled.`;
+
+          const st = await pollIngestStatus(data.doc_id);
+          if (st?.error && st.error !== null && st.error !== "not_found") {
+            uploadStatus.textContent += `\n\nIndex error: ${st.error}`;
+          } else if (st?.faiss === "done" || st?.bm25 === "done") {
+            uploadStatus.textContent =
+              `Index ready.\n` +
+              `doc_id: ${data.doc_id}\n` +
+              `faiss: ${st?.faiss || "unknown"} (added: ${st?.added ?? 0})\n` +
+              `bm25: ${st?.bm25 || "unknown"}\n`;
+          } else if (st?.error === "timeout") {
+            uploadStatus.textContent += `\n\nIndexing is in process. You can continue chatting; it will become available once finished.`;
+          }
+        } catch (err) {
+          uploadStatus.textContent = `Upload failed: ${err?.message || String(err)}`;
+        } finally {
+          uploadBtn.disabled = false;
+          clearUploadBtn.disabled = false;
+          if (pdfFile) pdfFile.value = "";
+        }
+      });
+
+      clearUploadBtn?.addEventListener("click", () => {
+        if (pdfFile) pdfFile.value = "";
+        uploadStatus.textContent = "";
       });
 
       showEvidence.addEventListener("change", () => {
         setEvidenceVisibility(showEvidence.checked);
       });
+
+      pdfFile.addEventListener("change", updatePdfHintVisibility);
 
       // Enter to send; Shift+Enter newline
       questionInput.addEventListener("keydown", (e) => {
@@ -727,7 +822,6 @@
 
       // ---------- Init ----------
       resetConversation();
-      topKVal.textContent = `${topK.value} articles`;
       setEvidenceVisibility(showEvidence.checked);
 
     </script>
