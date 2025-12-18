@@ -5,7 +5,7 @@
 [![Kaggle Notebook](https://img.shields.io/badge/Kaggle-Notebook-blue)]
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-> **C针对中国《民法典·合同编》的条文检索、问答与推理系统**
+> **针对中国《民法典·合同编》的条文检索、问答与推理系统**
 
 **Legal-RAG** 支持条文问答、多轮对话、PDF 上传解析，可用于法律研究、教学演示与原型系统搭建。
 
@@ -27,10 +27,13 @@
 ## 在线演示（Hugging Face Spaces）
   可直接访问 https://huggingface.co/spaces/flora-l/Legal-RAG （在线 Demo，无需本地环境）
 
-  使用 OpenAI，请在 Hugging Face Space 的 **Settings → Variables and secrets** 中设置：
-  - `OPENAI_API_KEY`（必需）
-  - `OPENAI_MODEL`（可选，如 `gpt-4o-mini`）
+  请按页面提示输入你自己的 OPENAI_API_KEY（必需）：
 
+  - 在 OpenAI 官方页面获取你的 Key：https://platform.openai.com/api-keys
+  - API Key 仅保存在当前浏览器会话中（sessionStorage）， 不会上传、不会存储在服务器端
+  - 使用完成后，你可以随时在 OpenAI 控制台 revoke（撤销）该 Key
+
+  <small>说明：该 Hugging Face Space 当前未启用 GPU，因此暂不支持本地 Qwen 模型推理。</small>
 
 ## 系统架构（System Architecture）
 
@@ -63,7 +66,7 @@ python -m scripts.build_index
 ```bash
 python -m uvicorn legalrag.api.server:app --host 127.0.0.1 --port 8000
 ````
-> 默认使用本地 Qwen 模型（如 Qwen/Qwen2-1.5B-Instruct），需要本地机器有GPU 和足够内存。
+> 默认使用本地 Qwen 模型（如 Qwen/Qwen2.5-3B-Instruct），需要本地机器有GPU 和足够内存。
 > 如需使用 OpenAI，请参考 「在线演示（Hugging Face Spaces） / OpenAI 配置」。
 
 ### 4. 打开演示界面
@@ -116,8 +119,8 @@ Legal-RAG/
 │
 ├── legalrag/
 │   ├── __init__.py
-│   ├── config.py                  # AppConfig / Paths / LLM / Retrieval
-│   ├── models.py                  # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
+│   ├── config.py                   
+│   ├── schemas.py                 # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   └── client.py              # Qwen / OpenAI LLMClient（async-safe）
@@ -126,10 +129,10 @@ Legal-RAG/
 │   │   ├── __init__.py
 │   │   ├── vector_store.py        # Dense (BGE + FAISS)
 │   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)
-│   │   ├── hybrid_retriever.py    # Dense + Sparse + 权重融合
-│   │   ├── corpus_loader.py       # read all chunks from processed_dir
+│   │   ├── hybrid_retriever.py    # Dense + Sparse 
+│   │   ├── corpus_loader.py       # 从 processed_dir 读取chunks
 │   │   ├── incremental_indexer.py
-│   │   └── graph_store.py         # law_graph / legal_kg 读取与 walk
+│   │   └── graph_store.py         # law_graph / legal_kg 读取与walk
 │   │
 │   ├── routing/
 │   │   ├── __init__.py
@@ -191,9 +194,9 @@ Legal-RAG/
 ├── LICENSE
 ├── pyproject.toml
 ├── requirements.txt
-├── app.py                           # Hugging Face Spaces entry
+├── app.py                           # Hugging Face Space入口
 ├── Dockerfile
-└── .gitignore                       # Git 忽略配置
+└── .gitignore                       
 
 ```
 

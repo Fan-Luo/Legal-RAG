@@ -4,7 +4,7 @@ emoji: "🤖"
 colorFrom: blue
 colorTo: purple
 sdk: docker
-app_port: 8000
+app_port: 7860
 pinned: true
 ---
 
@@ -14,20 +14,15 @@ pinned: true
 [![HuggingFace Spaces](https://img.shields.io/badge/Space-Legal--RAG-blue?logo=huggingface)](https://huggingface.co/spaces/flora-l/Legal-RAG)
 [![Kaggle Notebook](https://img.shields.io/badge/Kaggle-Notebook-blue)]
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-
-> **Contract Law Retrieval-Augmented Generation (RAG) system**  
-A production-grade Retrieval-Augmented Generation (RAG) system for Chinese Contract Law (《民法典·合同编》)
-Focused on correctness, traceability, and engineering clarity — not legal advice.
-
  
 
 ## What is Legal-RAG?
-Legal-RAG is an open-source, end-to-end legal information retrieval and reasoning system designed around the Chinese Civil Code – Contract Book.
+Legal-RAG is an open-source, end-to-end legal Retrieval-Augmented Generation (RAG) system designed around the Contract Law.
 
 It demonstrates how to build a law-aware RAG system that is:
 - grounded in explicit statutory text
 - engineered with retrieval transparency
-- structured for future extensibility (graph / routing / SaaS-ready)
+- structured for future extensibility  
 
 
 ## 🤗 Hugging Face Spaces Demo (Online)
@@ -36,13 +31,14 @@ This project provides a fully functional online demo deployed on Hugging Face Sp
 ### Live Demo
 👉 https://huggingface.co/spaces/flora-l/Legal-RAG 
 
-In the Hugging Face Space:
-  **Settings → Variables and secrets**
+Please follow the on-page instructions to enter your own OPENAI_API_KEY (required):
+- Obtain your API key from the official OpenAI dashboard: https://platform.openai.com/api-keys
+- Your API key is stored only in the current browser session (sessionStorage)
+- The key is never uploaded to or stored on the server
+- You may revoke the key at any time from your OpenAI account after use
 
-  Set:
-  
-    - OPENAI_API_KEY (required)
-    - OPENAI_MODEL (optional, e.g. gpt-4o-mini)
+<small>Note: This Space does not currently have GPU resources enabled, so local Qwen models are unavailable.</small>
+
 
 ## Features
 
@@ -51,10 +47,10 @@ In the Hugging Face Space:
 - Law-specific metadata (chapter / section / article number)
 - Retrieval results are inspectable and auditable
 
-### Hybrid Retrieval, Done Properly
+### Hybrid Retrieval 
 - Dense retrieval: FAISS
 - Sparse retrieval: BM25
-- Weighted fusion via HybridRetriever 
+- Weighted fusion  
 
 ### Query Routing & Graph Awareness
 - Lightweight law_graph for structural reasoning
@@ -72,7 +68,7 @@ In the Hugging Face Space:
 - Clear module boundaries
 - Deterministic data flow
 - Minimal magic, maximal readability
-- SaaS-compatible architecture without being a SaaS
+- SaaS-compatible architecture 
 
  
 
@@ -177,8 +173,8 @@ Legal-RAG/
 │
 ├── legalrag/
 │   ├── __init__.py
-│   ├── config.py                  # AppConfig / Paths / LLM / Retrieval
-│   ├── models.py                  # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
+│   ├── config.py                   
+│   ├── schemas.py                 # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   └── client.py              # Qwen / OpenAI LLMClient（async-safe）
@@ -187,10 +183,10 @@ Legal-RAG/
 │   │   ├── __init__.py
 │   │   ├── vector_store.py        # Dense (BGE + FAISS)
 │   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)
-│   │   ├── hybrid_retriever.py    # Dense + Sparse + 权重融合
+│   │   ├── hybrid_retriever.py    # Dense + Sparse  
 │   │   ├── corpus_loader.py       # read all chunks from processed_dir
 │   │   ├── incremental_indexer.py
-│   │   └── graph_store.py         # law_graph / legal_kg 读取与 walk
+│   │   └── graph_store.py         # law_graph / legal_kg  
 │   │
 │   ├── routing/
 │   │   ├── __init__.py
@@ -252,11 +248,21 @@ Legal-RAG/
 ├── LICENSE
 ├── pyproject.toml
 ├── requirements.txt
-├── app.py                           # Hugging Face Spaces entry
+├── app.py                           # Hugging Face Space entry
 ├── Dockerfile
 └── .gitignore                       
 
 ```
+
+
+## Who is this project for?
+This repository is intended for:
+- Engineers exploring RAG system design
+- Researchers working on legal NLP / AI + law
+- Practitioners interested in traceable AI systems
+- Candidates demonstrating architecture-level thinking
+
+> ⚠️ This project provides legal information assistance for educational and research purposes only and does not constitute legal advice. Users should not rely on this project as a substitute for professional legal counsel. The authors and contributors disclaim any liability for any direct or indirect consequences arising from the use of this project.
 
  
 
@@ -270,18 +276,6 @@ Legal-RAG is intentionally structured to support:
 - BYOK (Bring Your Own Key) SaaS models
 
 These are architectural affordances, not product promises.
-
-
-
-## Who is this project for?
-This repository is intended for:
-- Engineers exploring RAG system design
-- Researchers working on legal NLP / AI + law
-- Practitioners interested in traceable AI systems
-- Candidates demonstrating architecture-level thinking
-
-> ⚠️ This project provides legal information assistance for educational and research purposes only and does not constitute legal advice. Users should not rely on this project as a substitute for professional legal counsel. The authors and contributors disclaim any liability for any direct or indirect consequences arising from the use of this project.
-
 
 
 
