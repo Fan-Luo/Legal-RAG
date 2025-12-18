@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple, Dict, Any
 
 from legalrag.config import AppConfig
-from legalrag.models import LawChunk
+from legalrag.schemas import LawChunk
 from legalrag.pdf.parser import extract_text_from_pdf
 from legalrag.utils.logger import get_logger
 

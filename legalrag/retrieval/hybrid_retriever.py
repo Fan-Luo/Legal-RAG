@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List
 
 from legalrag.config import AppConfig
-from legalrag.models import RetrievalHit
+from legalrag.schemas import RetrievalHit
 from legalrag.retrieval.vector_store import VectorStore
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 

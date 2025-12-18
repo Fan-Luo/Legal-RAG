@@ -1,7 +1,7 @@
 import pytest
 
 from legalrag.routing.router import QueryRouter
-from legalrag.models import QueryType, RoutingMode
+from legalrag.schemas import QueryType, RoutingMode
 
 
 class DummyLLM:

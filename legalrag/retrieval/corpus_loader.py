@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Set
 
-from legalrag.models import LawChunk
+from legalrag.schemas import LawChunk
 
 def iter_chunks_from_dir(processed_dir: str, pattern: str = "*.jsonl") -> Iterable[LawChunk]:
     pdir = Path(processed_dir)

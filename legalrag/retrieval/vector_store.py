@@ -10,7 +10,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 
 from legalrag.config import AppConfig
-from legalrag.models import LawChunk
+from legalrag.schemas import LawChunk
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)

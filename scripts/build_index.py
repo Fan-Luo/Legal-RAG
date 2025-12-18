@@ -10,7 +10,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 
 from legalrag.config import AppConfig
-from legalrag.models import LawChunk
+from legalrag.schemas import LawChunk
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.utils.logger import get_logger
 from legalrag.retrieval.corpus_loader import load_chunks_from_dir

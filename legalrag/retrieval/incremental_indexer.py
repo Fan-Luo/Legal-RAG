@@ -9,7 +9,7 @@ import faiss
 from filelock import FileLock
 
 from legalrag.config import AppConfig
-from legalrag.models import LawChunk
+from legalrag.schemas import LawChunk
 from legalrag.retrieval.vector_store import VectorStore
 from legalrag.utils.logger import get_logger
 

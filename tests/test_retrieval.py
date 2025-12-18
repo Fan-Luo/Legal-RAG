@@ -6,7 +6,7 @@ import pytest
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.retrieval.vector_store import VectorStore
 from legalrag.retrieval.hybrid_retriever import HybridRetriever
-from legalrag.models import RetrievalHit
+from legalrag.schemas import RetrievalHit
 
 
 # -------------------------------------------------------------------

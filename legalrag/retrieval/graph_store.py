@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from legalrag.config import AppConfig
-from legalrag.models import LawNode
+from legalrag.schemas import LawNode
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
