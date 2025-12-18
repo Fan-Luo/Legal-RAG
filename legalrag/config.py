@@ -45,8 +45,10 @@ class LLMConfig(BaseModel):
 
     max_context_tokens: int = 4096
     max_new_tokens: int = 512
-    temperature: float = 0.86
+    temperature: float = 0.5
     top_p: float = 0.9
+    repetition_penalty: float = 1.12
+    no_repeat_ngram_size: int = 0  # 0 表示不启用    
 
 class RetrievalConfig(BaseModel):
     processed_file: str = "processed/contract_law.jsonl"
