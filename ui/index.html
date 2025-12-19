@@ -90,6 +90,12 @@
       }
       details.card > summary::-webkit-details-marker{ display: none; }
 
+      .divider{
+        height: 1px;
+        background: var(--border);
+        margin: 14px 0;
+      }
+
       /* ---------- Chat ---------- */
       .chat{
         display: flex;
@@ -261,28 +267,17 @@
 
       /* Toggle */
       .toggle{
-        display:inline-flex;
-        align-items:center;
-        gap:8px;
-        padding:6px 10px;
-        border:1px solid rgba(15,23,42,.08);
-        background: rgba(15,23,42,.03);
-        color: inherit;
-        border-radius: 999px;
-        cursor:pointer;
-        user-select:none;
-      }
-      .toggle:hover{ background: rgba(15,23,42,.06); }
-
-      .toggle .chev{
-        display:inline-block;
-        transform: rotate(-90deg); /* collapsed */
-        transition: transform .15s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
         font-weight: 700;
-        line-height: 1;
+        color: var(--muted);
+        user-select: none;
       }
-      .toggle[aria-expanded="true"] .chev{
-        transform: rotate(0deg); /* expanded -> v */
+      .toggle input{
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
       }
 
       /* Evidence list */
@@ -291,14 +286,11 @@
         min-height: 180px;
       }
 
-      .evidence-wrap.show{ display:block; }
-      .evidence-wrap:not(.show){ display:none; }
-
       .evidence-list{
         border: 1px solid var(--border);
         border-radius: var(--radius);
         padding: 10px;
-        max-height: 52vh;
+        max-height: 52vh;        /* Key: scroll container for the whole list */
         overflow: auto;
         background: #fff;
       }
@@ -351,7 +343,7 @@
       .evi-body{
         padding: 12px 14px 14px 14px;
         border-top: 1px solid var(--border);
-        max-height: 220px;
+        max-height: 220px;        /* Key: scroll inside expanded evidence */
         overflow: auto;
       }
 
@@ -359,6 +351,36 @@
         font-size: 14.5px;
         line-height: 1.65;
         color: var(--text);
+      }
+
+      /* Controls fields */
+      .field{
+        display: grid;
+        gap: 10px;
+      }
+      .field label{
+        font-size: 14px;
+        font-weight: 750;
+      }
+      .field input[type="range"]{
+        width: 100%;
+      }
+      .field select{
+        height: 44px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        padding: 0 12px;
+        font-size: 13px;
+        outline: none;
+      }
+      .field select:focus{
+        border-color: rgba(37,99,235,.55);
+        box-shadow: 0 0 0 4px var(--accent-weak);
+      }
+
+      .field-meta{
+        display: flex;
+        justify-content: flex-start;
       }
 
       .pill{
@@ -375,22 +397,8 @@
         font-family: var(--mono);
       }
 
-      /* Input (key) */
-      .key-input{
-        height: 40px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        padding: 0 12px;
-        outline: none;
-        font-size: 13px;
-      }
-      .key-input:focus{
-        border-color: rgba(37,99,235,.55);
-        box-shadow: 0 0 0 4px var(--accent-weak);
-      }
     </style>
   </head>
-
   <body>
     <div class="app">
       <!-- Left: Chat -->
@@ -425,7 +433,7 @@
             </div>
           </div>
           <div class="composer-hint">
-            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br />
+            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br>
             Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.
           </div>
         </form>
@@ -437,21 +445,15 @@
         <div class="card">
           <div class="card-header">
             <div class="card-title">Evidences / 法律依据</div>
-            <button
-              id="evidenceToggle"
-              class="toggle"
-              type="button"
-              aria-expanded="false"
-              aria-controls="evidenceWrap"
-            >
-              <span class="chev" aria-hidden="true">v</span>
-              <span class="toggleText" id="evidenceToggleText">Expand / 展开</span>
-            </button>
+            <label class="toggle">
+              <input id="showEvidence" type="checkbox" />
+              <span>Show</span>
+            </label>
           </div>
 
           <div id="evidenceHint" class="card-subtitle">Ask a question to see citations.</div>
 
-          <div id="evidenceWrap" class="evidence-wrap">
+          <div id="evidenceWrap" class="evidence-wrap" style="display: none;">
             <div id="evidenceList" class="evidence-list"></div>
           </div>
         </div>
@@ -460,26 +462,25 @@
         <details class="card" open>
           <summary class="card-summary">Upload PDF  / 上传文件</summary>
           <div class="card-body">
-            <div style="display:grid; gap:10px;">
-              <div class="card-subtitle" style="margin: 0; padding: 0;">
-                上传 PDF 扩展语料 / Upload a PDF to extend corpus
-              </div>
+            <div class="field">
+              <div class="card-subtitle" style="margin: 0; padding: 0;">上传 PDF 扩展语料 / Upload a PDF to extend corpus</div>
               <input id="pdfFile" type="file" accept="application/pdf" />
-              <div>
+              <div class="field-meta"> 
                 <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;">Max 10MB</span>
               </div>
             </div>
 
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button id="uploadBtn" class="btn" type="button">Upload</button>
               <button id="clearUploadBtn" class="btn btn-ghost" type="button">Clear</button>
             </div>
 
-            <div style="margin-top:12px;">
+            <div class="field" style="margin-top:12px;">
               <div id="uploadStatus" class="muted" style="white-space:pre-wrap;"></div>
             </div>
           </div>
         </details>
+
 
         <!-- OpenAI API Key -->
         <div class="card">
@@ -492,21 +493,28 @@
           </div>
             </div>
             <div class="muted" style="margin:8px; line-height:1.4;">
-              <div><small>This Space has no GPU. Provide your own OpenAI key to enable answers.</small></div>
-              <div>
-                <small>Get a key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer"><span style="font-family:monospace;">platform.openai.com/api-keys</span></a>.
-                </small>
-              </div>
-              <div><small>The key is stored only in your browser session.</small></div>
+            No GPU on this Space. Please provide your own OpenAI key to enable answers.
+            Get a key from <span style="font-family:monospace;">platform.openai.com/api-keys</span>.
+            The key is stored only in your browser session.
             </div>
           </div>
         </div>
+
       </aside>
     </div>
 
     <script>
+      /*
+        Legal-RAG UI (vanilla)
+        - Left: chat
+        - Right: Evidence (toggle + accordion) + Controls
+        Assumes the API is served from the same origin:
+          POST /rag/query {question, top_k, answer_style}
+      */
+
       const $ = (sel) => document.querySelector(sel);
 
+      
       const chatList = $("#chatList");
       const chatForm = $("#chatForm");
       const questionInput = $("#question");
@@ -514,8 +522,7 @@
       const clearBtn = $("#clearBtn");
       const newChatBtn = $("#newChatBtn");
 
-      const evidenceToggle = $("#evidenceToggle");
-      const evidenceToggleText = $("#evidenceToggleText");
+      const showEvidence = $("#showEvidence");
       const evidenceHint = $("#evidenceHint");
       const evidenceWrap = $("#evidenceWrap");
       const evidenceList = $("#evidenceList");
@@ -523,29 +530,38 @@
       const uploadBtn = $("#uploadBtn");
       const clearUploadBtn = $("#clearUploadBtn");
       const uploadStatus = $("#uploadStatus");
-      const pdfHint = $("#pdfHint");
-      const pdfFile = $("#pdfFile");
 
-      const openaiKeyInput = $("#openaiKey");
-      const saveKeyBtn = $("#saveKeyBtn");
-      const clearKeyBtn = $("#clearKeyBtn");
-
-      const KEY_STORAGE = "legalrag_openai_api_key";
+      const pdfHint = document.getElementById("pdfHint");
+      const pdfFile = document.getElementById("pdfFile");  
 
       const state = {
         busy: false,
+        hasAsked: false,
       };
 
       const MAX_MB = 10;
       const MAX_BYTES = MAX_MB * 1024 * 1024;
 
-      // Restore key from session
+      const openaiKeyInput = document.getElementById("openaiKey");
+      const saveKeyBtn = document.getElementById("saveKeyBtn");
+      const clearKeyBtn = document.getElementById("clearKeyBtn");
+
+      const KEY_STORAGE = "legalrag_openai_api_key";
+
+      // restore from session
       try {
         const saved = sessionStorage.getItem(KEY_STORAGE);
         if (saved && openaiKeyInput) openaiKeyInput.value = saved;
       } catch (e) {}
 
+
       // ---------- Helpers ----------
+
+      function getOpenAIKey() {
+        const k = (openaiKeyInput?.value || "").trim();
+        return k || "";
+      }
+
       function escapeHtml(s) {
         return String(s ?? "")
           .replaceAll("&", "&amp;")
@@ -554,7 +570,6 @@
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#039;");
       }
-<<<<<<< Updated upstream
       async function uploadPdfFile(file) {
         const fd = new FormData();
         fd.append("file", file, file.name);
@@ -588,8 +603,6 @@
       function scrollChatToBottom() {
         chatList.scrollTop = chatList.scrollHeight;
       }
-=======
->>>>>>> Stashed changes
 
       function addMessage(role, text) {
         const el = document.createElement("div");
@@ -601,7 +614,7 @@
           </div>
         `;
         chatList.appendChild(el);
-        chatList.scrollTop = chatList.scrollHeight;
+        scrollChatToBottom();
       }
 
       function setBusy(on) {
@@ -611,32 +624,30 @@
         sendBtn.textContent = on ? "Thinking…" : "Send";
       }
 
-      function getOpenAIKey() {
-        return String(openaiKeyInput?.value || "").trim();
+      function trimToConclusion(answer) {
+        const s = String(answer ?? "").trim();
+        if (!s) return "";
+
+        // 已经是“结论：”开头，绝对不要再裁剪
+        if (/^结论\s*[:：]/.test(s)) return s;
+
+        // 找到第一次出现的“结论：”，从这里开始保留（包含后续所有内容）
+        const m = s.match(/(?:^|\n)\s*结论\s*[:：]/);
+        if (m && typeof m.index === "number") {
+          const out = s.slice(m.index).trim();
+
+          // 防止只剩“结论：”这一行（极端情况）
+          const afterColon = out.replace(/^结论\s*[:：]\s*/, "").trim();
+          if (afterColon.length >= 2) return out;
+
+          // 如果冒号后确实没内容，就别裁剪了
+          return s;
+        }
+
+        // 没有“结论：”就原样返回
+        return s;
       }
 
-      function readSavedKey() {
-        try { return String(sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
-        return "";
-      }
-
-      function setSavedKey(k) {
-        try { sessionStorage.setItem(KEY_STORAGE, k); } catch (e) {}
-      }
-
-      function clearSavedKey() {
-        try { sessionStorage.removeItem(KEY_STORAGE); } catch (e) {}
-      }
-
-      function isEvidenceOpen(){
-        return evidenceWrap.classList.contains("show");
-      }
-
-      function setEvidenceOpen(open){
-        evidenceWrap.classList.toggle("show", open);
-        evidenceToggle.setAttribute("aria-expanded", open ? "true" : "false");
-        evidenceToggleText.textContent = open ? "Collapse / 收起" : "Expand / 展开";
-      }
 
       function normalizeHits(hits) {
         if (!Array.isArray(hits)) return [];
@@ -667,6 +678,7 @@
           det.className = "evi";
           det.open = false;
 
+          // Keep the list scannable: when one item expands, collapse the others.
           det.addEventListener("toggle", () => {
             if (!det.open) return;
             evidenceList.querySelectorAll("details.evi[open]").forEach((d) => {
@@ -691,6 +703,10 @@
         });
       }
 
+      function setEvidenceVisibility(visible) {
+        evidenceWrap.style.display = visible ? "block" : "none";
+      }
+
       function updatePdfHintVisibility() {
         const f = pdfFile?.files?.[0];
         if (!f) {
@@ -699,159 +715,43 @@
         }
         pdfHint.style.display = (f.size > MAX_BYTES) ? "inline-flex" : "none";
       }
-
-      async function uploadPdfFile(file) {
-        const fd = new FormData();
-        fd.append("file", file, file.name);
-
-        const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
-        if (!res.ok) {
-          const raw = await res.text().catch(() => "");
-          throw new Error(await friendlyErrorFromResponse(res.status, raw));
-        }
-        return res.json();
+      
+      function hidePdfHint() {
+        pdfHint.style.display = "none";
       }
 
-      async function pollIngestStatus(docId, { intervalMs = 1500, maxTries = 120 } = {}) {
-        for (let i = 0; i < maxTries; i++) {
-          const res = await fetch(`/ingest/status/${encodeURIComponent(docId)}`, { method: "GET" });
-          if (res.ok) {
-            const st = await res.json();
-            if (st?.error && st.error !== null && st.error !== "not_found") return st;
-
-            const faissDone = st?.faiss === "done";
-            const bm25Done = st?.bm25 === "done";
-            if (faissDone && bm25Done) return st;
-
-            uploadStatus.textContent = `Indexing...\n`;
-          }
-          await new Promise((r) => setTimeout(r, intervalMs));
-        }
-        return { error: "timeout" };
-      }
-
-      function trimToConclusion(answer) {
-        const s = String(answer ?? "").trim();
-        if (!s) return "";
-        if (/^结论\s*[:：]/.test(s)) return s;
-
-        const m = s.match(/(?:^|\n)\s*结论\s*[:：]/);
-        if (m && typeof m.index === "number") {
-          const out = s.slice(m.index).trim();
-          const afterColon = out.replace(/^结论\s*[:：]\s*/, "").trim();
-          if (afterColon.length >= 2) return out;
-          return s;
-        }
-        return s;
-      }
-
-      // ---------- Friendly error handling ----------
-      function friendlyErrorMessage(raw) {
-        const s = String(raw || "");
-
-        // 1) OpenAI quota
-        if (
-          /insufficient_quota/i.test(s) ||
-          /You exceeded your current quota/i.test(s) ||
-          /\bHTTP\s*429\b/i.test(s) ||
-          /status[_\s-]*code["']?\s*:\s*429/i.test(s)
-        ) {
-          return [
-            "OpenAI quota/billing issue (insufficient_quota).",
-            "Please check your OpenAI plan and billing, or use another API key.",
-            "If you just created the key, ensure the account has an active billing method and available quota."
-          ].join("\n");
-        }
-
-        // 2) Missing key
-        if (/OpenAI API Key required/i.test(s) || /\b401\b/.test(s) && /OpenAI/i.test(s)) {
-          return "OpenAI API key is required on this Space (no GPU). Please paste your key in the right panel and click Save.";
-        }
-
-        // 3) Missing model
-        if (/provide a model parameter/i.test(s)) {
-          return "OpenAI model is not configured. Please set OPENAI_MODEL on the server (or ensure the backend picks a default like gpt-4o-mini).";
-        }
-
-        // 4) Generic server error
-        if (/\bHTTP\s*500\b/.test(s) || /Internal Server Error/i.test(s) || /RAG query failed/i.test(s)) {
-          return "Server error occurred while processing the request. Please retry. If it persists, check that the index exists and the backend logs for the root cause.";
-        }
-
-        // 5) Fallback: show brief
-        return s.length > 800 ? (s.slice(0, 800) + " …") : s;
-      }
-
-      async function parseErrorPayload(rawText) {
-        const t = String(rawText || "").trim();
-        if (!t) return "";
-
-        // If looks like HTML (HF 404 page etc), keep only first line
-        if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return "Unexpected HTML response from server (可能是路由/反代问题)。";
-
-        // Try JSON
-        try {
-          const j = JSON.parse(t);
-
-          // common shapes:
-          //  - {detail: "..."} or {detail: {...}}
-          //  - {error: {message, code, type}}
-          if (j && typeof j === "object") {
-            if (typeof j.detail === "string") return j.detail;
-            if (j.detail && typeof j.detail === "object") {
-              const d = j.detail;
-              return d.message || d.msg || JSON.stringify(d);
-            }
-            if (j.error && typeof j.error === "object") {
-              const e = j.error;
-              return e.message || e.msg || JSON.stringify(e);
-            }
-          }
-          return t;
-        } catch (_) {
-          return t;
-        }
-      }
-
-      async function friendlyErrorFromResponse(status, rawText) {
-        const payload = await parseErrorPayload(rawText);
-        const combined = `HTTP ${status}: ${payload || ""}`.trim();
-        return friendlyErrorMessage(combined);
-      }
-
-      function maybeWarnOnFallback(answerText) {
-        const s = String(answerText || "");
-        if (!s) return null;
-
-        if (/【降级模式】/i.test(s) || /disabled 模型不可用/i.test(s)) {
-          return [
-            "LLM is currently unavailable and the system is showing retrieval-only output.",
-            "Please ensure your OpenAI key is valid and has quota.",
-          ].join("\n");
-        }
-        if (/insufficient_quota/i.test(s) || /exceeded your current quota/i.test(s)) {
-          return friendlyErrorMessage(s);
-        }
-        return null;
+      function resetConversation() {
+        chatList.innerHTML = "";
+        state.hasAsked = false;
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = "Ask a question to see citations.";
+        evidenceList.innerHTML = "";
+        // Keep user preference for show/hide evidence
       }
 
       async function callRag(question) {
-        const payload = { question, top_k: 10, answer_style: "专业" };
-
-        const headers = { "Content-Type": "application/json" };
-        const k = readSavedKey() || getOpenAIKey();
-        if (k) headers["X-OpenAI-Api-Key"] = k;
+        const payload = {
+          question,
+          top_k: 10,
+          answer_style: "专业",
+        };
 
         const res = await fetch("/rag/query", {
           method: "POST",
-          headers,
+          headers: (() => {
+          const h = { "Content-Type": "application/json" };
+          let k = "";
+          try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+          if (!k) k = getOpenAIKey();
+          if (k) h["X-OpenAI-Api-Key"] = k;
+          return h;
+        })(),
           body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
-          const raw = await res.text().catch(() => "");
-          const friendly = await friendlyErrorFromResponse(res.status, raw);
-          throw new Error(friendly);
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
         }
 
         return res.json();
@@ -861,13 +761,13 @@
       saveKeyBtn?.addEventListener("click", () => {
         const k = getOpenAIKey();
         if (!k) return alert("Please paste your OpenAI API key first.");
-        setSavedKey(k);
+        try { sessionStorage.setItem(KEY_STORAGE, k); } catch (e) {}
         alert("Saved for this browser session.");
       });
 
       clearKeyBtn?.addEventListener("click", () => {
         if (openaiKeyInput) openaiKeyInput.value = "";
-        clearSavedKey();
+        try { sessionStorage.removeItem(KEY_STORAGE); } catch (e) {}
         alert("Cleared.");
       });
 
@@ -881,7 +781,6 @@
           uploadStatus.textContent = "仅支持 PDF 文件 / PDF only.";
           return;
         }
-
         uploadBtn.disabled = true;
         clearUploadBtn.disabled = true;
         uploadStatus.textContent = `Uploading: ${file.name} ...`;
@@ -913,51 +812,49 @@
           uploadBtn.disabled = false;
           clearUploadBtn.disabled = false;
           if (pdfFile) pdfFile.value = "";
-          pdfHint.style.display = "none";
         }
       });
 
       clearUploadBtn?.addEventListener("click", () => {
         if (pdfFile) pdfFile.value = "";
         uploadStatus.textContent = "";
-        pdfHint.style.display = "none";
       });
 
-      evidenceToggle?.addEventListener("click", () => {
-        setEvidenceOpen(!isEvidenceOpen());
+      showEvidence.addEventListener("change", () => {
+        setEvidenceVisibility(showEvidence.checked);
       });
 
-      pdfFile?.addEventListener("change", updatePdfHintVisibility);
+      pdfFile.addEventListener("change", updatePdfHintVisibility);
 
-      questionInput?.addEventListener("keydown", (e) => {
+      // Enter to send; Shift+Enter newline
+      questionInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           chatForm.requestSubmit();
         }
       });
 
-      clearBtn?.addEventListener("click", () => {
+      clearBtn.addEventListener("click", () => {
         questionInput.value = "";
         questionInput.focus();
       });
 
-      newChatBtn?.addEventListener("click", () => {
-        chatList.innerHTML = "";
-        evidenceHint.style.display = "block";
-        evidenceHint.textContent = "Ask a question to see citations.";
-        evidenceList.innerHTML = "";
-        setEvidenceOpen(false);
+      newChatBtn.addEventListener("click", () => {
+        resetConversation();
       });
 
-      chatForm?.addEventListener("submit", async (e) => {
+      chatForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         if (state.busy) return;
 
-        const q = String(questionInput.value || "").trim();
+        const q = (questionInput.value || "").trim();
         if (!q) return;
 
         addMessage("user", q);
         questionInput.value = "";
+
+        // show evidence panel only if user opted in (keep preference)
+        setEvidenceVisibility(showEvidence.checked);
 
         setBusy(true);
         try {
@@ -967,11 +864,9 @@
           const answer = trimToConclusion(answerRaw) || "（未返回答案）";
           addMessage("assistant", answer);
 
-          // If backend returned fallback text but 200 OK, still provide a friendly hint
-          const hint = maybeWarnOnFallback(answerRaw);
-          if (hint) addMessage("assistant", hint);
-
+          // Render evidence (even if hidden, keep it ready)
           renderEvidence(data.hits ?? []);
+          state.hasAsked = true;
         } catch (err) {
           addMessage("assistant", `请求失败：${err?.message || String(err)}`);
         } finally {
@@ -981,11 +876,9 @@
       });
 
       // ---------- Init ----------
-      // default collapsed
-      setEvidenceOpen(false);
-      evidenceHint.style.display = "block";
-      evidenceHint.textContent = "Ask a question to see citations.";
-      evidenceList.innerHTML = "";
+      resetConversation();
+      setEvidenceVisibility(showEvidence.checked);
+
     </script>
   </body>
 </html>

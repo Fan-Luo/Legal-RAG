@@ -125,7 +125,7 @@ class RagPipeline:
         self.retriever = HybridRetriever(cfg)
         self.graph = LawGraphStore(cfg)
 
-        # LLM client (can be disabled / degraded, depending on cfg)
+        # LLM client  
         self.llm = LLMClient.from_config(cfg)
 
         # Router (can be llm-based or heuristic depending on cfg.routing.llm_based)
@@ -400,14 +400,13 @@ class RagPipeline:
             query_type=query_type_str,
         )
         msg_chars = sum(len(m.get("content", "")) for m in messages)
+        llm = llm_override or self.llm
         logger.info(
-            "[RAG] calling LLM.chat (provider=%s, model=%s), messages_chars=%d",
-            self.cfg.llm.provider,
-            self.cfg.llm.model,
+            "[RAG] calling LLM.chat (effective_provider=%s, model=%s), messages_chars=%d",
+            getattr(llm, "provider", None),
+            getattr(llm, "model_name", None),
             msg_chars,
         )
-
-        llm = llm_override or self.llm
 
         raw_answer: str
         # if chat(messages=...) not supported, fallback to string prompt.

@@ -45,6 +45,8 @@ class LLMClient(BaseModel):
             temperature=getattr(llm_cfg, "temperature", 0.3),
             top_p=getattr(llm_cfg, "top_p", 0.9),
         )
+        
+
         inst._init_backend(llm_cfg)
         return inst
 
@@ -52,14 +54,30 @@ class LLMClient(BaseModel):
     @classmethod
     def from_config_with_key(cls, cfg: AppConfig, openai_key: str | None):
         llm_cfg = cfg.llm
+
+        # If user provided a key, force OpenAI for this instance only.
+        provider = "openai" if (openai_key and openai_key.strip()) else llm_cfg.provider
+
+        if  provider == "openai":
+            # Pick model name: prefer OPENAI_MODEL env if present, else cfg.llm.model
+            openai_model = (os.getenv("OPENAI_MODEL", "") or "").strip()
+            cfg_model = (getattr(llm_cfg, "openai_model", "") or "").strip()
+            model_name = openai_model or cfg_model or "gpt-4o-mini"
+        elif rovider == "qwen-local":
+            cfg_model = (getattr(llm_cfg, "qwen_model", "") or "").strip()
+            model_name = cfg_model or "Qwen/Qwen2.5-3B-Instruct"
+        else:
+            model_name = (getattr(llm_cfg, "model", "") or "").strip()
+
         inst = cls(
-            provider=llm_cfg.provider,
-            model_name=llm_cfg.model,
+            provider=provider,
+            model_name=model_name,
             max_context_tokens=llm_cfg.max_context_tokens,
             max_new_tokens=getattr(llm_cfg, "max_new_tokens", 512),
             temperature=getattr(llm_cfg, "temperature", 0.3),
             top_p=getattr(llm_cfg, "top_p", 0.9),
         )
+        logger.info(f"[LLM] override init provider={inst.provider} model_name={inst.model_name!r} env_OPENAI_MODEL={os.getenv('OPENAI_MODEL','')!r}")
         inst._init_backend(llm_cfg, override_openai_key=openai_key)
         return inst
 
@@ -132,13 +150,14 @@ class LLMClient(BaseModel):
             if messages is None:
                 if prompt is None:
                     raise ValueError("Either prompt or messages must be provided.")
-                # 兼容旧模式：把 prompt 包成 messages（system 可留空）
                 messages = [{"role": "user", "content": prompt}]
             else:
-                # 兼容调用方没传 prompt 的情况
                 prompt = prompt or ""
 
             if self.provider == "openai":
+                logger.info(f"[LLM] OpenAI request model={self.model_name!r}")
+                if not self.model_name:
+                    raise ValueError("OpenAI model is empty. Set OPENAI_MODEL or configure cfg.llm.model.")
                 out = self._chat_openai_messages(messages)
             elif self.provider == "qwen-local":
                 if self.model is None or self.tokenizer is None:
@@ -164,11 +183,7 @@ class LLMClient(BaseModel):
     # -----------------------
     # 异步接口（可用于并发/服务端）
     # -----------------------
-    async def chat_async(self, prompt: str) -> Dict[str, Any]:
-        """
-        兼容 async 场景：不在这里自己管理 event loop；
-        直接把同步 chat() 放到线程池，避免 notebook loop 冲突。
-        """
+    async def chat_async(self, prompt: str) -> Dict[str, Any]: 
         text = await asyncio.to_thread(self.chat, prompt)
         return {"text": text, "mode": "normal", "provider": self.provider, "context_snippet": prompt[-1500:]}
 
@@ -177,7 +192,6 @@ class LLMClient(BaseModel):
     # -----------------------
     def _chat_openai_messages(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         if self.client is None:
-            # 取一个 user 内容作 snippet
             last_user = ""
             for m in reversed(messages):
                 if m.get("role") == "user":
@@ -185,47 +199,71 @@ class LLMClient(BaseModel):
                     break
             return self._degraded_response(last_user, provider="openai")
 
+        def _last_user_text() -> str:
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    return m.get("content", "") or ""
+            return ""
+
+        def _is_restricted_sampling_model(model: str) -> bool:
+            """
+            GPT-5 / reasoning-like models often reject non-default sampling params
+            (e.g., temperature != 1). To be safe, omit sampling params entirely.
+            """
+            m = (model or "").lower().strip()
+            # Cover common GPT-5 names and likely reasoning families.
+            return (
+                m.startswith("gpt-5")
+                or m.startswith("o1")
+                or m.startswith("o3")
+                or "thinking" in m
+            )
+
         try:
             last_err: Optional[Exception] = None
+
             for attempt in range(2):
                 try:
-                    resp = self.client.chat.completions.create(
-                        model=self.model_name,
-                        messages=messages,
+                    # Base required args
+                    kwargs: Dict[str, Any] = {
+                        "model": self.model_name,
+                        "messages": messages,
+                    }
+
+                    # Only pass sampling params if model family supports it.
+                    if not _is_restricted_sampling_model(self.model_name):
+                        if self.temperature is not None:
+                            kwargs["temperature"] = self.temperature
+                        if self.top_p is not None:
+                            kwargs["top_p"] = self.top_p
+
+                    logger.info(
+                        "[LLM] OpenAI request model=%r kwargs_keys=%s",
+                        self.model_name,
+                        sorted(kwargs.keys()),
                     )
+
+                    resp = self.client.chat.completions.create(**kwargs)
                     text = resp.choices[0].message.content or ""
-                    # snippet：最后一个 user 内容
-                    last_user = ""
-                    for m in reversed(messages):
-                        if m.get("role") == "user":
-                            last_user = m.get("content", "")
-                            break
+
+                    last_user = _last_user_text()
                     return {
                         "text": text,
                         "mode": "normal",
                         "provider": "openai",
                         "context_snippet": last_user[-1500:],
                     }
+
                 except OpenAIError as e:
                     last_err = e
                     logger.warning(f"[LLM] OpenAI 调用失败，重试中({attempt+1}/2): {e}")
-            logger.warning(f"[LLM] OpenAI 多次失败，进入降级模式: {last_err}")
 
-            last_user = ""
-            for m in reversed(messages):
-                if m.get("role") == "user":
-                    last_user = m.get("content", "")
-                    break
-            return self._degraded_response(last_user, provider="openai")
+            logger.warning(f"[LLM] OpenAI 多次失败，进入降级模式: {last_err}")
+            return self._degraded_response(_last_user_text(), provider="openai")
 
         except Exception as e:
             logger.exception(f"[LLM] OpenAI 调用异常: {e}")
-            last_user = ""
-            for m in reversed(messages):
-                if m.get("role") == "user":
-                    last_user = m.get("content", "")
-                    break
-            return self._degraded_response(last_user, provider="openai")
+            return self._degraded_response(_last_user_text(), provider="openai")
 
     # -----------------------
     # Qwen-local（messages -> chat_template -> generate）
@@ -297,9 +335,8 @@ class LLMClient(BaseModel):
         provider = provider or self.provider
         return {
             "text": (
-                f"【降级模式】{provider} 模型不可用或生成失败。\n\n"
-                "当前系统仅展示检索到的条文，LLM 问答功能暂不可用。\n\n"
-                "提示：最近文本上下文（长度限制 1500 字符）：\n\n" + prompt[-1500:]
+                f"【降级模式】模型不可用, LLM 问答功能暂不可用。\n\n"
+                "当前系统仅展示检索到的条文。\n\n"
             ),
             "mode": "degraded",
             "provider": provider,
