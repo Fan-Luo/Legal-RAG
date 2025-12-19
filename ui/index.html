@@ -62,6 +62,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 12px;
       }
 
       .card-title{
@@ -265,32 +266,50 @@
         gap: 16px;
       }
 
-      /* Toggle */
-      .toggle{
-        display: flex;
+      /* ---------- Evidence (two-stage UX) ---------- */
+      .evidence-toggle-btn{
+        display: inline-flex;
         align-items: center;
         gap: 10px;
-        font-weight: 700;
-        color: var(--muted);
+        padding: 10px 14px;
+        border: none;
+        background: none;
+        box-shadow: none;
+/*        border-radius: 999px;
+        border: 2px solid rgba(37,99,235,.8);
+        background: rgba(37,99,235,.06);*/
+        cursor: pointer;
+        font-weight: 800;
+        color: var(--text);
         user-select: none;
       }
-      .toggle input{
-        width: 16px;
-        height: 16px;
-        accent-color: var(--accent);
+/*      .evidence-toggle-btn:hover{
+        background: rgba(37,99,235,.10);
+      }*/
+      .chev{
+        width: 18px;
+        height: 18px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 20pt;
+     /*   border-radius: 6px;
+        background: rgba(37,99,235,.10);
+        color: var(--accent);*/
+        font-weight: 900;
+        line-height: 1;
       }
-
-      /* Evidence list */
-      .evidence-wrap{
+      .evidence-body{
         padding: 0 18px 18px 18px;
-        min-height: 180px;
+      }
+      .evidence-body.collapsed{
+        display: none;
       }
 
       .evidence-list{
         border: 1px solid var(--border);
         border-radius: var(--radius);
         padding: 10px;
-        max-height: 52vh;        /* Key: scroll container for the whole list */
+        max-height: 52vh;
         overflow: auto;
         background: #fff;
       }
@@ -343,7 +362,7 @@
       .evi-body{
         padding: 12px 14px 14px 14px;
         border-top: 1px solid var(--border);
-        max-height: 220px;        /* Key: scroll inside expanded evidence */
+        max-height: 220px;
         overflow: auto;
       }
 
@@ -359,28 +378,8 @@
         gap: 10px;
       }
       .field label{
-        font-size: 14px;
+        font-size: 12px;
         font-weight: 750;
-      }
-      .field input[type="range"]{
-        width: 100%;
-      }
-      .field select{
-        height: 44px;
-        border-radius: 14px;
-        border: 1px solid var(--border);
-        padding: 0 12px;
-        font-size: 13px;
-        outline: none;
-      }
-      .field select:focus{
-        border-color: rgba(37,99,235,.55);
-        box-shadow: 0 0 0 4px var(--accent-weak);
-      }
-
-      .field-meta{
-        display: flex;
-        justify-content: flex-start;
       }
 
       .pill{
@@ -396,7 +395,6 @@
         background: #fff;
         font-family: var(--mono);
       }
-
     </style>
   </head>
   <body>
@@ -433,7 +431,7 @@
             </div>
           </div>
           <div class="composer-hint">
-            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br>
+            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br />
             Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.
           </div>
         </form>
@@ -441,19 +439,20 @@
 
       <!-- Right: Sidebar -->
       <aside class="side">
-        <!-- Evidence -->
+        <!-- Evidence (always visible, default collapsed; auto-expand on submit) -->
         <div class="card">
           <div class="card-header">
             <div class="card-title">Evidences / 法律依据</div>
-            <label class="toggle">
-              <input id="showEvidence" type="checkbox" />
-              <span>Show</span>
-            </label>
+
+            <button id="evidenceToggle" class="evidence-toggle-btn" type="button" aria-expanded="false">
+              <span id="evidenceToggleText">Expand / 展开</span>
+              <span class="chev" aria-hidden="true">V</span>
+            </button>
           </div>
 
           <div id="evidenceHint" class="card-subtitle">Ask a question to see citations.</div>
 
-          <div id="evidenceWrap" class="evidence-wrap" style="display: none;">
+          <div id="evidenceBody" class="evidence-body collapsed">
             <div id="evidenceList" class="evidence-list"></div>
           </div>
         </div>
@@ -465,7 +464,7 @@
             <div class="field">
               <div class="card-subtitle" style="margin: 0; padding: 0;">上传 PDF 扩展语料 / Upload a PDF to extend corpus</div>
               <input id="pdfFile" type="file" accept="application/pdf" />
-              <div class="field-meta"> 
+              <div style="display:flex; align-items:center; gap:10px;">
                 <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;">Max 10MB</span>
               </div>
             </div>
@@ -480,7 +479,6 @@
             </div>
           </div>
         </details>
-
 
         <!-- OpenAI API Key -->
         <div class="card">
@@ -499,22 +497,12 @@
             </div>
           </div>
         </div>
-
       </aside>
     </div>
 
     <script>
-      /*
-        Legal-RAG UI (vanilla)
-        - Left: chat
-        - Right: Evidence (toggle + accordion) + Controls
-        Assumes the API is served from the same origin:
-          POST /rag/query {question, top_k, answer_style}
-      */
-
       const $ = (sel) => document.querySelector(sel);
 
-      
       const chatList = $("#chatList");
       const chatForm = $("#chatForm");
       const questionInput = $("#question");
@@ -522,9 +510,12 @@
       const clearBtn = $("#clearBtn");
       const newChatBtn = $("#newChatBtn");
 
-      const showEvidence = $("#showEvidence");
+      // Evidence (two-stage)
+      const evidenceToggle = $("#evidenceToggle");
+      const evidenceToggleText = $("#evidenceToggleText");
+      const evidenceToggleIcon = evidenceToggle?.querySelector(".chev");
       const evidenceHint = $("#evidenceHint");
-      const evidenceWrap = $("#evidenceWrap");
+      const evidenceBody = $("#evidenceBody");
       const evidenceList = $("#evidenceList");
 
       const uploadBtn = $("#uploadBtn");
@@ -532,35 +523,23 @@
       const uploadStatus = $("#uploadStatus");
 
       const pdfHint = document.getElementById("pdfHint");
-      const pdfFile = document.getElementById("pdfFile");  
-
-      const state = {
-        busy: false,
-        hasAsked: false,
-      };
-
-      const MAX_MB = 10;
-      const MAX_BYTES = MAX_MB * 1024 * 1024;
+      const pdfFile = document.getElementById("pdfFile");
 
       const openaiKeyInput = document.getElementById("openaiKey");
       const saveKeyBtn = document.getElementById("saveKeyBtn");
       const clearKeyBtn = document.getElementById("clearKeyBtn");
-
       const KEY_STORAGE = "legalrag_openai_api_key";
 
-      // restore from session
+      const state = { busy: false, hasAsked: false };
+
+      const MAX_MB = 10;
+      const MAX_BYTES = MAX_MB * 1024 * 1024;
+
+      // restore key from session
       try {
         const saved = sessionStorage.getItem(KEY_STORAGE);
         if (saved && openaiKeyInput) openaiKeyInput.value = saved;
       } catch (e) {}
-
-
-      // ---------- Helpers ----------
-
-      function getOpenAIKey() {
-        const k = (openaiKeyInput?.value || "").trim();
-        return k || "";
-      }
 
       function escapeHtml(s) {
         return String(s ?? "")
@@ -569,35 +548,6 @@
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#039;");
-      }
-      async function uploadPdfFile(file) {
-        const fd = new FormData();
-        fd.append("file", file, file.name);
-
-        const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
-        if (!res.ok) {
-          const msg = await res.text().catch(() => "");
-          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
-        }
-        return res.json();
-      }
-
-      async function pollIngestStatus(docId, { intervalMs = 1500, maxTries = 120 } = {}) {
-        for (let i = 0; i < maxTries; i++) {
-          const res = await fetch(`/ingest/status/${encodeURIComponent(docId)}`, { method: "GET" });
-          if (res.ok) {
-            const st = await res.json();
-            if (st?.error && st.error !== null && st.error !== "not_found") return st;
-
-            const faissDone = st?.faiss === "done";
-            const bm25Done = st?.bm25 === "done";
-            if (faissDone && bm25Done) return st;
-
-            uploadStatus.textContent = `Indexing...\n`;
-          }
-          await new Promise((r) => setTimeout(r, intervalMs));
-        }
-        return { error: "timeout" };
       }
 
       function scrollChatToBottom() {
@@ -624,28 +574,20 @@
         sendBtn.textContent = on ? "Thinking…" : "Send";
       }
 
-      function trimToConclusion(answer) {
-        const s = String(answer ?? "").trim();
-        if (!s) return "";
+      function getOpenAIKey() {
+        const k = (openaiKeyInput?.value || "").trim();
+        return k || "";
+      }
 
-        // 已经是“结论：”开头，绝对不要再裁剪
-        if (/^结论\s*[:：]/.test(s)) return s;
+      function isEvidenceOpen() {
+        return !evidenceBody.classList.contains("collapsed");
+      }
 
-        // 找到第一次出现的“结论：”，从这里开始保留（包含后续所有内容）
-        const m = s.match(/(?:^|\n)\s*结论\s*[:：]/);
-        if (m && typeof m.index === "number") {
-          const out = s.slice(m.index).trim();
-
-          // 防止只剩“结论：”这一行（极端情况）
-          const afterColon = out.replace(/^结论\s*[:：]\s*/, "").trim();
-          if (afterColon.length >= 2) return out;
-
-          // 如果冒号后确实没内容，就别裁剪了
-          return s;
-        }
-
-        // 没有“结论：”就原样返回
-        return s;
+      function setEvidenceOpen(open){
+        evidenceBody.classList.toggle("collapsed", !open);
+        evidenceToggle.setAttribute("aria-expanded", open ? "true" : "false");
+        // evidenceToggleText.textContent = open ? "Collapse / 收起" : "Expand / 展开";
+        if (evidenceToggleIcon) evidenceToggleIcon.textContent = open ? "▴": "▾" ;
       }
 
 
@@ -678,7 +620,6 @@
           det.className = "evi";
           det.open = false;
 
-          // Keep the list scannable: when one item expands, collapse the others.
           det.addEventListener("toggle", () => {
             if (!det.open) return;
             evidenceList.querySelectorAll("details.evi[open]").forEach((d) => {
@@ -703,10 +644,6 @@
         });
       }
 
-      function setEvidenceVisibility(visible) {
-        evidenceWrap.style.display = visible ? "block" : "none";
-      }
-
       function updatePdfHintVisibility() {
         const f = pdfFile?.files?.[0];
         if (!f) {
@@ -715,37 +652,60 @@
         }
         pdfHint.style.display = (f.size > MAX_BYTES) ? "inline-flex" : "none";
       }
-      
-      function hidePdfHint() {
-        pdfHint.style.display = "none";
-      }
 
       function resetConversation() {
         chatList.innerHTML = "";
         state.hasAsked = false;
+
+        evidenceList.innerHTML = "";
         evidenceHint.style.display = "block";
         evidenceHint.textContent = "Ask a question to see citations.";
-        evidenceList.innerHTML = "";
-        // Keep user preference for show/hide evidence
+
+        setEvidenceOpen(false); // default collapsed
       }
 
-      async function callRag(question) {
-        const payload = {
-          question,
-          top_k: 10,
-          answer_style: "专业",
-        };
+      async function uploadPdfFile(file) {
+        const fd = new FormData();
+        fd.append("file", file, file.name);
 
-        const res = await fetch("/rag/query", {
+        const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+        return res.json();
+      }
+
+      async function pollIngestStatus(docId, { intervalMs = 1500, maxTries = 120 } = {}) {
+        for (let i = 0; i < maxTries; i++) {
+          const res = await fetch(`/ingest/status/${encodeURIComponent(docId)}`, { method: "GET" });
+          if (res.ok) {
+            const st = await res.json();
+            if (st?.error && st.error !== null && st.error !== "not_found") return st;
+
+            const faissDone = st?.faiss === "done";
+            const bm25Done = st?.bm25 === "done";
+            if (faissDone && bm25Done) return st;
+
+            uploadStatus.textContent = `Indexing...\n`;
+          }
+          await new Promise((r) => setTimeout(r, intervalMs));
+        }
+        return { error: "timeout" };
+      }
+
+      async function callRetrieve(question) {
+        const payload = { question, top_k: 10 };
+
+        const headers = { "Content-Type": "application/json" };
+        let k = "";
+        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+        if (!k) k = getOpenAIKey();
+        if (k) headers["X-OpenAI-Api-Key"] = k;
+
+        const res = await fetch("/rag/retrieve", {
           method: "POST",
-          headers: (() => {
-          const h = { "Content-Type": "application/json" };
-          let k = "";
-          try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
-          if (!k) k = getOpenAIKey();
-          if (k) h["X-OpenAI-Api-Key"] = k;
-          return h;
-        })(),
+          headers,
           body: JSON.stringify(payload),
         });
 
@@ -753,11 +713,36 @@
           const msg = await res.text().catch(() => "");
           throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
         }
-
         return res.json();
       }
 
-      // ---------- Events ----------
+      async function callAnswer(retrieval_id) {
+        const payload = { retrieval_id };
+
+        const headers = { "Content-Type": "application/json" };
+        let k = "";
+        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+        if (!k) k = getOpenAIKey();
+        if (k) headers["X-OpenAI-Api-Key"] = k;
+
+        const res = await fetch("/rag/answer", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+        return res.json();
+      }
+
+      // -------- Events --------
+      evidenceToggle.addEventListener("click", () => {
+        setEvidenceOpen(!isEvidenceOpen());
+      });
+
       saveKeyBtn?.addEventListener("click", () => {
         const k = getOpenAIKey();
         if (!k) return alert("Please paste your OpenAI API key first.");
@@ -781,6 +766,7 @@
           uploadStatus.textContent = "仅支持 PDF 文件 / PDF only.";
           return;
         }
+
         uploadBtn.disabled = true;
         clearUploadBtn.disabled = true;
         uploadStatus.textContent = `Uploading: ${file.name} ...`;
@@ -820,13 +806,8 @@
         uploadStatus.textContent = "";
       });
 
-      showEvidence.addEventListener("change", () => {
-        setEvidenceVisibility(showEvidence.checked);
-      });
-
       pdfFile.addEventListener("change", updatePdfHintVisibility);
 
-      // Enter to send; Shift+Enter newline
       questionInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
@@ -850,24 +831,35 @@
         const q = (questionInput.value || "").trim();
         if (!q) return;
 
+        // Stage 1: open evidence immediately, show placeholder
+        setEvidenceOpen(true);
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = "Searching citations…";
+        evidenceList.innerHTML = "";
+
         addMessage("user", q);
         questionInput.value = "";
 
-        // show evidence panel only if user opted in (keep preference)
-        setEvidenceVisibility(showEvidence.checked);
-
         setBusy(true);
         try {
-          const data = await callRag(q);
+          // Stage 1: retrieve (fast)
+          const r = await callRetrieve(q);
+          renderEvidence(r.hits ?? []);
 
-          const answerRaw = String(data.answer ?? "");
-          const answer = trimToConclusion(answerRaw) || "（未返回答案）";
+          evidenceHint.style.display = "block";
+          evidenceHint.textContent = "Generating answer…";
+
+          // Stage 2: answer (slow)
+          const a = await callAnswer(r.retrieval_id);
+          const answerRaw = String(a.answer ?? "");
+          const answer = (answerRaw || "").trim() || "（未返回答案）";
           addMessage("assistant", answer);
 
-          // Render evidence (even if hidden, keep it ready)
-          renderEvidence(data.hits ?? []);
           state.hasAsked = true;
         } catch (err) {
+          // keep evidence panel open; show error in chat
+          evidenceHint.style.display = "block";
+          // evidenceHint.textContent = "No citations returned.";
           addMessage("assistant", `请求失败：${err?.message || String(err)}`);
         } finally {
           setBusy(false);
@@ -875,10 +867,8 @@
         }
       });
 
-      // ---------- Init ----------
+      // Init
       resetConversation();
-      setEvidenceVisibility(showEvidence.checked);
-
     </script>
   </body>
 </html>

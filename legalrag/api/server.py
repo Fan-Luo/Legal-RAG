@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os, subprocess
+import os, subprocess, uuid
 from pathlib import Path
 from typing import Any, Optional
 import threading, time, requests
@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from filelock import FileLock
-import re
+
 from legalrag.config import AppConfig
 from legalrag.ingest.ingestor import PDFIngestor
 from legalrag.llm.client import LLMClient
@@ -195,8 +195,74 @@ async def startup_event():
     asyncio.create_task(asyncio.to_thread(build_pipeline_sync))
 
 
-@app.post("/rag/query")
-async def rag_query(body: dict, request: Request):
+# -----------------------
+# Two-stage RAG  
+# -----------------------
+
+# In-memory cache for stage-1 retrieval results.
+# retrieval_id -> {"question": str, "decision": Any, "hits": List[RetrievalHit], "created_at": float}
+RETRIEVE_CACHE: dict[str, dict[str, Any]] = {}
+RETRIEVE_TTL_SEC = 15 * 60  # 15 minutes
+
+
+def _purge_retrieve_cache(now: float | None = None) -> None:
+    now = now or time.time()
+    dead = [rid for rid, v in RETRIEVE_CACHE.items() if (now - float(v.get("created_at", 0))) > RETRIEVE_TTL_SEC]
+    for rid in dead:
+        RETRIEVE_CACHE.pop(rid, None)
+
+
+def _serialize_hits(hits: list[Any]) -> list[dict[str, Any]]:
+    hit_rows: list[dict[str, Any]] = []
+    for h in hits or []:
+        chunk = _get(h, "chunk", None)
+        hit_rows.append(
+            {
+                "rank": _get(h, "rank", ""),
+                "score": float(_get(h, "score", 0.0) or 0.0),
+                "law_name": _get(chunk, "law_name", "") if chunk else "",
+                "chapter": _get(chunk, "chapter", "") if chunk else "",
+                "section": _get(chunk, "section", "") if chunk else "",
+                "article_no": _get(chunk, "article_no", "") if chunk else "",
+                "text": _get(chunk, "text", "") if chunk else "",
+                "source": _get(h, "source", "") or _get(chunk, "source", "") if chunk else "",
+            }
+        )
+    return hit_rows
+
+
+def _llm_override_from_request(request: Request) -> Optional[LLMClient]:
+    """
+    Create a per-request LLM override when:
+      - server provider=disabled, or
+      - server provider=openai but server has no env key
+    Uses header: X-OpenAI-Api-Key
+    """
+    assert CFG is not None
+    user_openai_key = request.headers.get("X-OpenAI-Api-Key", "").strip()
+
+    if getattr(CFG.llm, "provider", "") == "disabled":
+        if not user_openai_key:
+            raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
+        return LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
+
+    if getattr(CFG.llm, "provider", "") == "openai":
+        if not os.getenv(CFG.llm.api_key_env, "").strip():
+            if not user_openai_key:
+                raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
+            return LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
+
+    return None
+
+
+@app.post("/rag/retrieve")
+async def rag_retrieve(body: dict, request: Request):
+    """
+    Stage 1 (fast): retrieval only.
+    Returns:
+      - retrieval_id: cache key for the second stage
+      - hits: citations for UI
+    """
     if not PIPELINE_READY or pipeline is None or CFG is None:
         raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
 
@@ -204,118 +270,99 @@ async def rag_query(body: dict, request: Request):
     if not question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
 
-    user_openai_key = request.headers.get("X-OpenAI-Api-Key", "").strip()
-    logger.info(f"[req] X-OpenAI-Api-Key present={bool(user_openai_key)} len={len(user_openai_key)}")
-
-    llm_override = None
-
-    if getattr(CFG.llm, "provider", "") == "disabled":
-        if not user_openai_key:
-            raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
-        llm_override = LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
-
-    elif getattr(CFG.llm, "provider", "") == "openai":
-        if not os.getenv(CFG.llm.api_key_env, "").strip():
-            if not user_openai_key:
-                raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
-            llm_override = LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
-
-    # log override safely
-    logger.info(
-        f"[req] llm_override_provider={getattr(llm_override, 'provider', None)} "
-        f"model={getattr(llm_override, 'model', None)}"
-    )
+    top_k = body.get("top_k", None)
+    try:
+        top_k = int(top_k) if top_k is not None else None
+    except Exception:
+        top_k = None
 
     try:
-        ans = pipeline.answer(question, llm_override=llm_override)
+        decision, hits, eff_top_k = pipeline.retrieve(question, top_k=top_k)
 
-        answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
-        hits = _get(ans, "hits", []) or []
+        rid = uuid.uuid4().hex
+        _purge_retrieve_cache()
+        RETRIEVE_CACHE[rid] = {
+            "question": question,
+            "decision": decision,
+            "hits": hits,
+            "created_at": time.time(),
+        }
 
-        hit_rows = []
-        for h in hits:
-            chunk = _get(h, "chunk", None)
-            hit_rows.append(
-                {
-                    "rank": _get(h, "rank", ""),
-                    "score": _get(h, "score", 0.0),
-                    "law_name": _get(chunk, "law_name", "") if chunk else "",
-                    "chapter": _get(chunk, "chapter", "") if chunk else "",
-                    "section": _get(chunk, "section", "") if chunk else "",
-                    "article_no": _get(chunk, "article_no", "") if chunk else "",
-                    "text": _get(chunk, "text", "") if chunk else "",
-                }
-            )
-
-        return {"question": question, "answer": answer_text, "hits": hit_rows}
+        return {
+            "question": question,
+            "retrieval_id": rid,
+            "top_k": eff_top_k,
+            "hits": _serialize_hits(hits),
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        # Classify common OpenAI/client failures so the frontend can show friendly messages
-        msg = str(e) if e is not None else ""
-        msg_l = msg.lower()
+        logger.exception(f"RAG retrieve failed: {e}")
+        raise HTTPException(status_code=500, detail="RAG retrieve failed")
 
-        # 1) Insufficient quota / rate limit
-        if ("insufficient_quota" in msg_l) or ("you exceeded your current quota" in msg_l):
-            logger.warning(f"RAG query failed (insufficient_quota): {msg}")
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "type": "insufficient_quota",
-                    "code": "insufficient_quota",
-                    "message": msg,
-                },
-            )
 
-        # 2) Missing model parameter
-        if ("must provide a model parameter" in msg_l) or ("provide a model parameter" in msg_l):
-            logger.warning(f"RAG query failed (missing_model): {msg}")
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "type": "missing_model",
-                    "code": "missing_model",
-                    "message": msg,
-                },
-            )
+@app.post("/rag/answer")
+async def rag_answer(body: dict, request: Request):
+    """
+    Stage 2 (slow): generate answer using cached hits.
+    """
+    if not PIPELINE_READY or pipeline is None or CFG is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
 
-        # 3) Missing API key 
-        if ("api key required" in msg_l) or ("openai api key required" in msg_l):
-            logger.warning(f"RAG query failed (missing_api_key): {msg}")
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "type": "missing_api_key",
-                    "code": "missing_api_key",
-                    "message": msg,
-                },
-            )
+    rid = (body.get("retrieval_id") or "").strip()
+    question = (body.get("question") or "").strip()
 
-        # 4) Generic OpenAI 4xx/5xx surfaced in message like: "Error code: 429 - {...}"
-        m = re.search(r"error code:\s*(\d{3})", msg_l)
-        if m:
-            code = int(m.group(1))
-            logger.warning(f"RAG query failed (llm_error_{code}): {msg}")
-            raise HTTPException(
-                status_code=code if 400 <= code <= 599 else 500,
-                detail={
-                    "type": "llm_error",
-                    "code": code,
-                    "message": msg,
-                },
-            )
+    decision = None
+    hits = None
 
-        logger.exception(f"RAG 查询失败: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "type": "server_error",
-                "message": "RAG query failed",
-                "raw": msg[:2000],  # avoid overly large payloads
-            },
-        )
+    if rid:
+        _purge_retrieve_cache()
+        cached = RETRIEVE_CACHE.get(rid)
+        if not cached:
+            raise HTTPException(status_code=404, detail="retrieval_id not found or expired")
+        question = cached.get("question", question) or question
+        decision = cached.get("decision")
+        hits = cached.get("hits") or []
 
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing 'question'")
+
+    if hits is None:
+        # Fallback: accept hits from client (not recommended, but allows stateless use)
+        hits = body.get("hits") or []
+        # If hits are already serialized dicts, pipeline.answer_from_hits expects RetrievalHit objects.
+        # Therefore: if hits are dicts, we cannot reliably reconstruct here.
+        if hits and isinstance(hits[0], dict):
+            raise HTTPException(status_code=400, detail="Please call /rag/retrieve first and pass retrieval_id to /rag/answer")
+
+    llm_override = _llm_override_from_request(request)
+
+    try:
+        ans = pipeline.answer_from_hits(question, hits, decision=decision, llm_override=llm_override)
+
+        answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
+        out_hits = _get(ans, "hits", []) or hits or []
+
+        return {"question": question, "answer": answer_text, "hits": _serialize_hits(out_hits), "retrieval_id": rid or None}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"RAG answer failed: {e}")
+        raise HTTPException(status_code=500, detail="RAG answer failed")
+
+
+@app.post("/rag/query")
+async def rag_query(body: dict, request: Request):
+    """
+    Single endpoint (retrieve + answer).
+    """
+    r = await rag_retrieve(body, request)
+    rid = r.get("retrieval_id")
+    a = await rag_answer({"retrieval_id": rid}, request)
+    # Keep original shape {question, answer, hits}
+    return {"question": a.get("question"), "answer": a.get("answer"), "hits": a.get("hits")}
 
 
 # -----------------------

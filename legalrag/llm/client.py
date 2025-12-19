@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import json
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import torch
 from pydantic import BaseModel
@@ -63,7 +63,7 @@ class LLMClient(BaseModel):
             openai_model = (os.getenv("OPENAI_MODEL", "") or "").strip()
             cfg_model = (getattr(llm_cfg, "openai_model", "") or "").strip()
             model_name = openai_model or cfg_model or "gpt-4o-mini"
-        elif rovider == "qwen-local":
+        elif provider == "qwen-local":
             cfg_model = (getattr(llm_cfg, "qwen_model", "") or "").strip()
             model_name = cfg_model or "Qwen/Qwen2.5-3B-Instruct"
         else:
