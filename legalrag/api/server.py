@@ -7,16 +7,17 @@ from typing import Any, Optional
 import threading, time, requests
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from filelock import FileLock
-
+import time
 from legalrag.config import AppConfig
 from legalrag.ingest.ingestor import PDFIngestor
 from legalrag.llm.client import LLMClient
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.retrieval.incremental_indexer import IncrementalIndexer
+
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -301,14 +302,19 @@ async def rag_retrieve(body: dict, request: Request):
         logger.exception(f"RAG retrieve failed: {e}")
         raise HTTPException(status_code=500, detail="RAG retrieve failed")
 
-
 @app.post("/rag/answer")
 async def rag_answer(body: dict, request: Request):
     """
-    Stage 2 (slow): generate answer using cached hits.
+    Stage 2: generate answer using cached hits.
+    Supports SSE streaming when:
+      - header Accept includes 'text/event-stream', OR
+      - body['stream'] == True
     """
     if not PIPELINE_READY or pipeline is None or CFG is None:
         raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
+
+    accept = (request.headers.get("accept") or "").lower()
+    stream = bool(body.get("stream")) or ("text/event-stream" in accept)
 
     rid = (body.get("retrieval_id") or "").strip()
     question = (body.get("question") or "").strip()
@@ -329,41 +335,151 @@ async def rag_answer(body: dict, request: Request):
         raise HTTPException(status_code=400, detail="Missing 'question'")
 
     if hits is None:
-        # Fallback: accept hits from client (not recommended, but allows stateless use)
+        # Stateless fallback is intentionally unsupported for now (hits are complex objects).
         hits = body.get("hits") or []
-        # If hits are already serialized dicts, pipeline.answer_from_hits expects RetrievalHit objects.
-        # Therefore: if hits are dicts, we cannot reliably reconstruct here.
         if hits and isinstance(hits[0], dict):
-            raise HTTPException(status_code=400, detail="Please call /rag/retrieve first and pass retrieval_id to /rag/answer")
+            raise HTTPException(
+                status_code=400,
+                detail="Please call /rag/retrieve first and pass retrieval_id to /rag/answer",
+            )
 
     llm_override = _llm_override_from_request(request)
 
-    try:
-        ans = pipeline.answer_from_hits(question, hits, decision=decision, llm_override=llm_override)
+    # -----------------------------
+    # 返回JSON
+    # -----------------------------
+    if not stream:
+        try:
+            logger.info(f"answer_from_hits")
+            ans = pipeline.answer_from_hits(
+                question, hits, decision=decision, llm_override=llm_override
+            )
+            answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
+            out_hits = _get(ans, "hits", []) or hits or []
+            return {
+                "question": question,
+                "answer": answer_text,
+                "hits": _serialize_hits(out_hits),
+                "retrieval_id": rid or None,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"RAG answer failed: {e}")
+            raise HTTPException(status_code=500, detail="RAG answer failed")
 
-        answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
-        out_hits = _get(ans, "hits", []) or hits or []
+    # -----------------------------
+    # 流式返回（SSE）
+    # -----------------------------
+    import json as _json
 
-        return {"question": question, "answer": answer_text, "hits": _serialize_hits(out_hits), "retrieval_id": rid or None}
+    def _sse(event: str, data_obj: Any) -> bytes:
+        if isinstance(data_obj, str):
+            data_str = data_obj
+        else:
+            data_str = _json.dumps(data_obj, ensure_ascii=False)
+        return f"event: {event}\ndata: {data_str}\n\n".encode("utf-8")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"RAG answer failed: {e}")
-        raise HTTPException(status_code=500, detail="RAG answer failed")
+    async def gen():
+        logger.info(f"gen()")
+        yield b":" + b" " * 2048 + b"\n\n"
+        # 强制 SSE 首次 flush
+        yield b": ping\n\n"
 
+        t0 = time.time()
+        # yield _sse("meta", {"t0": t0, "retrieval_id": rid or None})
+
+        # 再次 ping，确保中间层不缓冲
+        yield b": ping\n\n"
+
+        try:
+            # 发送 meta 信息
+            yield _sse("meta", {"question": question, "retrieval_id": rid or None})
+
+            # 优先使用 pipeline 的异步流式生成函数
+            stream_fn = getattr(pipeline, "answer_stream_from_hits", None)
+            final_text = ""  # 我们不再需要后端累积，因为前端已处理
+
+            if callable(stream_fn):
+                logger.info(f"callable(stream_fn)")
+                last_ping = time.time()
+                # 真正的实时 token 流式输出
+                async for chunk in stream_fn(
+                    question, hits, decision=decision, llm_override=llm_override
+                ):
+                    now = time.time()
+                    if now - last_ping > 1.0:
+                        yield b": ping\n\n"
+                        last_ping = now
+                    dt = round(now - t0, 3)
+                    # logger.info("[SSE] token dt=%.3f len=%d", dt, len(chunk))
+                    if chunk:
+                        yield _sse("token", {"text": chunk, "dt": dt})
+
+                # 不需要再调用 answer_from_hits，避免重复计算
+                # 直接发送 done，只包含 rid（前端用 acc 作为最终答案）
+                yield _sse("done", {"ok": True, "dt": round(time.time()-t0, 3)})
+
+            # else:
+            #     # fallback：先生成完整答案，再手动分块发送
+            #     final_ans = pipeline.answer_from_hits(
+            #         question, hits, decision=decision, llm_override=llm_override
+            #     )
+            #     final_text = _get(final_ans, "answer", "") or _get(final_ans, "text", "") or ""
+
+            #     chunk_size = 30
+            #     for i in range(0, len(final_text), chunk_size):
+            #         yield _sse("token", final_text[i : i + chunk_size])
+            #         await asyncio.sleep(0.01)  # 轻微延时，防止同步阻塞事件循环
+
+            #     yield _sse("done", {
+            #         "retrieval_id": rid or None
+            #     })
+
+        except Exception as e:
+            logger.exception(f"RAG answer stream failed: {e}")
+            yield _sse("error", {"error": str(e)})
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",  # 禁用 nginx/proxy 缓冲，确保实时推送
+    }
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
 
 @app.post("/rag/query")
 async def rag_query(body: dict, request: Request):
     """
-    Single endpoint (retrieve + answer).
+    Single endpoint (retrieve + answer)，包括 streaming 支持。
     """
-    r = await rag_retrieve(body, request)
-    rid = r.get("retrieval_id")
-    a = await rag_answer({"retrieval_id": rid}, request)
-    # Keep original shape {question, answer, hits}
-    return {"question": a.get("question"), "answer": a.get("answer"), "hits": a.get("hits")}
+    # Stage 1: retrieve
+    retrieve_resp = await rag_retrieve(body, request)
+    rid = retrieve_resp.get("retrieval_id")
 
+    if not rid:
+        raise HTTPException(status_code=500, detail="Retrieval failed: no retrieval_id returned")
+
+    # Stage 2: 构造 answer 请求，继承 stream 参数
+    answer_body = {"retrieval_id": rid}
+
+    if body.get("stream"):
+        answer_body["stream"] = body["stream"]
+
+    # if body.get("top_k") is not None:
+    #     answer_body["top_k"] = body["top_k"]
+
+    # 直接返回 rag_answer 的响应（无论是 JSON 还是 StreamingResponse）
+    return await rag_answer(answer_body, request)
 
 # -----------------------
 # PDF ingest

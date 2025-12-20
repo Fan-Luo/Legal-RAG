@@ -210,7 +210,8 @@
       .content{
         font-size: 14.5px;
         line-height: 1.55;
-        white-space: normal;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
 
       /* ---------- Composer ---------- */
@@ -310,7 +311,7 @@
         height: 18px;
         display: inline-grid;
         place-items: center;
-        font-size: 20pt;
+        font-size: 17pt;
         font-weight: 900;
         line-height: 1;
       }
@@ -752,6 +753,49 @@
           .replaceAll("'", "&#039;");
       }
 
+
+
+      function smartParagraphForDisplay(text) {
+        // Keep code fences stable: if inside ``` fence, do not auto-insert blank lines.
+        const fenceCount = (String(text).match(/```/g) || []).length;
+        const inFence = fenceCount % 2 === 1;
+        if (inFence) return String(text);
+
+        const s = String(text);
+
+        // Respect model-provided paragraphs
+        if (s.includes("\n\n")) return s;
+
+        // Only apply when text is long enough (avoid jitter early)
+        if (s.length < 220) return s;
+
+        // Insert paragraph breaks after sentence-ending punctuation (CN/EN)
+        return s
+          .replace(/([。！？\.!\?])([ \t]*)(?!\n)/g, "$1\n\n")
+          .replace(/\n{3,}/g, "\n\n");
+      }
+
+      function addAssistantPlaceholder() {
+        const el = document.createElement("div");
+        el.className = "msg assistant";
+        el.innerHTML = `
+          <div class="bubble">
+            <div class="role">Assistant</div>
+            <div class="content"></div>
+          </div>
+        `;
+        chatList.appendChild(el);
+        scrollChatToBottom();
+        return el.querySelector(".content");
+      }
+
+      function setBubbleContentText(contentEl, text) {
+        // Streaming stage: escape + preserve newlines.
+        const safe = escapeHtml(text).replaceAll("\n", "<br/>");
+        contentEl.innerHTML = safe;
+      }
+
+
       function scrollChatToBottom() {
         chatList.scrollTop = chatList.scrollHeight;
       }
@@ -894,6 +938,80 @@
         return { error: "timeout" };
       }
 
+      async function callAnswer(retrieval_id, opts = {}) {
+        const payload = { retrieval_id, stream: true };
+        let tokenCount = 0;
+        const headers = { "Content-Type": "application/json", "Accept": "text/event-stream" };
+        let k = "";
+        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+        if (!k) k = getOpenAIKey();
+        if (k) headers["X-OpenAI-Api-Key"] = k;
+
+        const res = await fetch("/rag/answer", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+
+        const onToken = typeof opts.onToken === "function" ? opts.onToken : null;
+        const onError = typeof opts.onError === "function" ? opts.onError : null;
+        const onDone = typeof opts.onDone === "function" ? opts.onDone : null;
+
+        // SSE parse
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buf = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+
+            let eventType = "message";
+            const dataLines = [];
+
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("event:")) eventType = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+              // comment/heartbeat lines start with ":" -> ignore
+            }
+
+            const dataStr = dataLines.join("\n");
+            let dataObj = null;
+            try { dataObj = JSON.parse(dataStr); } catch (e) {}
+
+            if (eventType === "token") {
+              const t = dataObj && typeof dataObj.text === "string" ? dataObj.text : dataStr;
+              tokenCount += 1;
+              // if (dataObj && dataObj.dt != null && tokenCount % 50 === 0) {
+              //   console.log("dt", dataObj.dt, "tokens", tokenCount);
+              // }
+              if (t && onToken) onToken(t);
+
+            } else if (eventType === "error") {
+              const payload = dataObj || { kind: "server_error", message: dataStr };
+              if (onError) onError(payload);
+              return;
+            } else if (eventType === "done") {
+              const payload = dataObj || { ok: true };
+              if (onDone) onDone(payload);
+              return;
+            }
+          }
+        }
+        if (onDone) onDone({ ok: true });
+      }
+
       async function callRetrieve(question) {
         const payload = { question, top_k: 10 };
 
@@ -904,28 +1022,6 @@
         if (k) headers["X-OpenAI-Api-Key"] = k;
 
         const res = await fetch("/rag/retrieve", {
-          method: "POST",
-          headers,
-          body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-          const msg = await res.text().catch(() => "");
-          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
-        }
-        return res.json();
-      }
-
-      async function callAnswer(retrieval_id) {
-        const payload = { retrieval_id };
-
-        const headers = { "Content-Type": "application/json" };
-        let k = "";
-        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
-        if (!k) k = getOpenAIKey();
-        if (k) headers["X-OpenAI-Api-Key"] = k;
-
-        const res = await fetch("/rag/answer", {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -1060,10 +1156,37 @@
           evidenceHint.style.display = "block";
           evidenceHint.textContent = translations[currentLang].generating;  // 显示正在生成答案的提示
 
-          const a = await callAnswer(r.retrieval_id);  // 获取答案
-          const answerRaw = String(a.answer ?? "");
-          const answer = (answerRaw || "").trim() || "（未返回答案）";
-          addMessage("assistant", answer);
+          // Streaming answer: create assistant bubble first, then append incrementally
+          const contentEl = addAssistantPlaceholder();
+          let acc = "";
+
+          await callAnswer(r.retrieval_id, {
+            onToken: (t) => {
+              acc += t;
+              const display = smartParagraphForDisplay(acc);
+              setBubbleContentText(contentEl, display);
+              scrollChatToBottom();
+            },
+            onError: (e) => {
+              const kind = e && e.kind ? String(e.kind) : "server_error";
+              if (kind === "rate_limit") {
+                const msg = (e && e.message) ? e.message : "触发限流，请稍后重试。";
+                const title = (e && e.title) ? e.title : "请求被限流";
+                setBubbleContentText(contentEl, `${title}\n\n${msg}`);
+              } else {
+                const msg = (e && e.message) ? e.message : JSON.stringify(e);
+                setBubbleContentText(contentEl, `请求失败：${msg}`);
+              }
+              evidenceHint.style.display = "none";
+            },
+            onDone: () => {
+              // final render: preserve model's original paragraphs
+              // const finalText = (acc || "").trim() || "（未返回答案）";
+              // setBubbleContentText(contentEl, finalText);
+              evidenceHint.style.display = "none";
+              state.hasAsked = true;
+            }
+          });
 
           // 完成生成，隐藏检索提示
           evidenceHint.style.display = "none";  

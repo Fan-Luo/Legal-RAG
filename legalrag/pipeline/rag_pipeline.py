@@ -6,6 +6,9 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import json
 import re
 
+import asyncio
+import inspect
+
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -17,6 +20,10 @@ from legalrag.retrieval.hybrid_retriever import HybridRetriever
 from legalrag.retrieval.graph_store import LawGraphStore
 from legalrag.routing.router import QueryRouter
 from legalrag.utils.logger import get_logger
+from typing import AsyncIterator
+import time
+import threading
+start = time.time()
 
 logger = get_logger(__name__)
 
@@ -287,6 +294,9 @@ class RagPipeline:
         user_compiled = "\n\n".join([s for s in [self._user_prefix, one_example, self._user_suffix] if s.strip()])
         user_compiled = user_compiled.format(question=question, query_type=query_type, law_context=law_context)
 
+        # Enforce a stable, readable structure (minimal addition; does not change routing/retrieval)
+        user_compiled += "\n\n【输出格式】\n- 先用 2-3 行给出结论（可用‘结论：’开头）\n- 再分段给出：依据（条文编号+要点）、分析、可操作建议\n- 用空行分段，必要时用项目符号列表\n"
+
         return [
             {"role": "system", "content": self._sys_part.strip()},
             {"role": "user", "content": user_compiled.strip()},
@@ -339,6 +349,76 @@ class RagPipeline:
             raw = llm.chat(prompt=self._messages_to_prompt(messages))
 
         return RagAnswer(question=question, answer=_trim_to_answer(raw), hits=hits)
+
+    async def answer_stream_from_hits(
+        self,
+        question: str,
+        hits: list,
+        decision: Optional[Any] = None,
+        llm_override: Optional[dict] = None,
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        t_build0 = time.time()
+
+        query_type = None
+        if decision is not None:
+            query_type = getattr(decision, "query_type", None) or getattr(decision, "type", None)
+
+        try:
+            messages = self._build_messages(question, hits, query_type)
+        except TypeError:
+            messages = self._build_messages(question, hits)
+
+        logger.info("[TIMING] build_messages=%.3fs", time.time() - t_build0)
+
+        llm = llm_override or self.llm
+        if llm is None:
+            raise RuntimeError("LLM not initialized")
+
+        stream_fn = getattr(llm, "chat_stream", None)
+        if not callable(stream_fn):
+            raise RuntimeError("LLM chat_stream() not available; cannot stream")
+
+        t_call0 = time.time()
+        stream_obj = stream_fn(messages)
+        logger.info("[TIMING] chat_stream_call=%.3fs", time.time() - t_call0)
+
+        # Branch 1: async iterator/generator (OpenAI in your current implementation)
+        if hasattr(stream_obj, "__aiter__"):
+            first = True
+            async for piece in stream_obj:
+                if first:
+                    logger.info("[TIMING] first_piece_after_call=%.3fs", time.time() - t_call0)
+                    first = False
+                if piece:
+                    yield piece
+            return
+
+        # Branch 2: sync iterator -> thread bridge -> async yield
+        q: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        first_sent = False
+
+        def _worker():
+            nonlocal first_sent
+            try:
+                for piece in stream_obj:
+                    if piece:
+                        if not first_sent:
+                            logger.info("[TIMING] first_piece_after_call=%.3fs", time.time() - t_call0)
+                            first_sent = True
+                        asyncio.run_coroutine_threadsafe(q.put(piece), loop)
+            finally:
+                asyncio.run_coroutine_threadsafe(q.put(None), loop)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+        while True:
+            item = await q.get()
+            if item is None:
+                break
+            yield item
 
     def answer(self, question: str, top_k: Optional[int] = None, llm_override: Optional[LLMClient] = None) -> RagAnswer:
         decision, hits, eff_top_k = self.retrieve(question, top_k=top_k)
