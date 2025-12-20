@@ -97,6 +97,10 @@
         margin: 14px 0;
       }
 
+      .no-link {
+        color: inherit; /* Makes the link inherit the color of its parent (text color) */
+      }
+      
       /* ---------- Chat ---------- */
       .chat{
         display: flex;
@@ -147,6 +151,26 @@
       .topbar-actions{
         display: flex;
         gap: 10px;
+        align-items: center;
+      }
+
+      /* 新增语言切换按钮样式 */
+      .lang-switch {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        user-select: none;
+      }
+      .lang-switch .active {
+        color: var(--accent);
       }
 
       .chat-list{
@@ -229,6 +253,7 @@
         margin-top: 10px;
         color: var(--muted);
         font-size: 12px;
+        line-height: 1.5;
       }
 
       /* ---------- Buttons ---------- */
@@ -275,26 +300,17 @@
         border: none;
         background: none;
         box-shadow: none;
-/*        border-radius: 999px;
-        border: 2px solid rgba(37,99,235,.8);
-        background: rgba(37,99,235,.06);*/
         cursor: pointer;
         font-weight: 800;
         color: var(--text);
         user-select: none;
       }
-/*      .evidence-toggle-btn:hover{
-        background: rgba(37,99,235,.10);
-      }*/
       .chev{
         width: 18px;
         height: 18px;
         display: inline-grid;
         place-items: center;
         font-size: 20pt;
-     /*   border-radius: 6px;
-        background: rgba(37,99,235,.10);
-        color: var(--accent);*/
         font-weight: 900;
         line-height: 1;
       }
@@ -306,8 +322,7 @@
       }
 
       .evidence-list{
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
+        border: None;
         padding: 10px;
         max-height: 52vh;
         overflow: auto;
@@ -395,6 +410,56 @@
         background: #fff;
         font-family: var(--mono);
       }
+
+      /* 小屏：确保侧边栏卡片内容始终可见 */
+      @media (max-width: 980px) {
+        .side {
+          min-height: auto;          /* 取消 min-height: 0 的收缩限制 */
+          overflow-y: auto;          /* 如果内容太长允许滚动 */
+          padding-bottom: 20px;      /* 给底部留点空间，避免粘底 */
+        }
+
+        .card {
+          min-height: auto;          /* 确保卡片能撑开 */
+          overflow: visible;         /* 防止内容被隐藏 */
+        }
+
+        .card-body {
+          min-height: 80px;          /* 给 card-body 最小高度，避免被压扁 */
+          display: flex;
+          flex-direction: column;
+          gap: 12px;                 /* 内部元素间距更清晰 */
+        }
+
+        /* 特别针对 OpenAI Key 那行，确保 row 始终显示 */
+        .card-body .row {
+          flex-shrink: 0;            /* 不允许这行被压缩 */
+          min-height: 50px;
+          align-items: center;
+        }
+
+        /* Upload PDF 的 details 内容也确保可见 */
+        details.card[open] .card-body {
+          min-height: 120px;
+        }
+
+        .app {
+          grid-template-rows: 1fr auto;  /* 聊天区占主要高度，侧边栏自适应 */
+          height: 100vh;
+          height: 100dvh;                /* 兼容移动端动态高度 */
+        }
+
+        .chat {
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .side {
+          max-height: 50vh;              /* 限制侧边栏最大高度 */
+          overflow-y: auto;              /* 内容多时可滚动 */
+        }
+      }
+
     </style>
   </head>
   <body>
@@ -406,12 +471,19 @@
             <div class="logo">L</div>
             <div class="brand-text">
               <div class="title">Legal-RAG</div>
-              <div class="subtitle">Contract Law · RAG</div>
+              <div class="subtitle" data-i18n="subtitle">Contract Law · RAG</div>
             </div>
           </div>
 
           <div class="topbar-actions">
-            <button id="newChatBtn" class="btn btn-ghost" type="button">New chat</button>
+            <!-- 语言切换按钮 -->
+            <div id="langSwitch" class="lang-switch" role="button" aria-label="Switch language">
+              <span class="lang-en">EN</span>
+              <span>/</span>
+              <span class="lang-zh">中</span>
+            </div>
+
+            <button id="newChatBtn" class="btn btn-ghost" type="button" data-i18n="newChat">New chat</button>
           </div>
         </header>
 
@@ -422,35 +494,31 @@
             <textarea
               id="question"
               class="composer-input"
-              placeholder="输入你的法律问题…（Enter 发送，Shift+Enter 换行）"
               rows="2"
             ></textarea>
             <div class="composer-actions">
-              <button id="sendBtn" class="btn btn-primary" type="submit">Send</button>
-              <button id="clearBtn" class="btn btn-ghost" type="button">Clear</button>
+              <button id="sendBtn" class="btn btn-primary" type="submit" data-i18n="send">Send</button>
+              <button id="clearBtn" class="btn btn-ghost" type="button" data-i18n="clear">Clear</button>
             </div>
           </div>
-          <div class="composer-hint">
-            免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。 <br />
-            Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.
-          </div>
+          <div class="composer-hint" id="disclaimer"></div>
         </form>
       </section>
 
       <!-- Right: Sidebar -->
       <aside class="side">
-        <!-- Evidence (always visible, default collapsed; auto-expand on submit) -->
+        <!-- Evidence -->
         <div class="card">
           <div class="card-header">
-            <div class="card-title">Evidences / 法律依据</div>
+            <div class="card-title" data-i18n="evidences">Evidences</div>
 
             <button id="evidenceToggle" class="evidence-toggle-btn" type="button" aria-expanded="false">
-              <span id="evidenceToggleText">Expand / 展开</span>
-              <span class="chev" aria-hidden="true">V</span>
+              <!-- <span id="evidenceToggleText" data-i18n="expand">Expand</span> -->
+              <span class="chev" aria-hidden="true">▾</span>
             </button>
           </div>
 
-          <div id="evidenceHint" class="card-subtitle">Ask a question to see citations.</div>
+          <div id="evidenceHint" class="card-subtitle" data-i18n="askHint">Ask a question to see citations.</div>
 
           <div id="evidenceBody" class="evidence-body collapsed">
             <div id="evidenceList" class="evidence-list"></div>
@@ -459,19 +527,29 @@
 
         <!-- Upload -->
         <details class="card" open>
-          <summary class="card-summary">Upload PDF  / 上传文件</summary>
+          <summary class="card-summary" data-i18n="uploadPdf">Upload PDF</summary>
           <div class="card-body">
             <div class="field">
-              <div class="card-subtitle" style="margin: 0; padding: 0;">上传 PDF 扩展语料 / Upload a PDF to extend corpus</div>
-              <input id="pdfFile" type="file" accept="application/pdf" />
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;">Max 10MB</span>
+              <div class="card-subtitle" style="margin: 0; padding: 0;" data-i18n="uploadDesc">
+                Upload a PDF to extend corpus
+              </div>
+
+              <div style="margin-top: 8px;">
+                <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                  <input id="pdfFile" type="file" accept="application/pdf" style="display: none;" />
+                  <span id="fileButtonText" class="btn btn-ghost" data-i18n="chooseFile" style="display:flex; align-items:center; gap:10px;">Choose File</span>
+                </label>
+                <span id="fileNameDisplay" style="margin-left: 12px; color: var(--muted);"></span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:10px; margin-top: 6px;">
+                <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;" data-i18n="maxSize">Max 10MB</span>
               </div>
             </div>
 
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <button id="uploadBtn" class="btn" type="button">Upload</button>
-              <button id="clearUploadBtn" class="btn btn-ghost" type="button">Clear</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top: 12px;">
+              <button id="uploadBtn" class="btn" type="button" data-i18n="upload">Upload</button>
+              <button id="clearUploadBtn" class="btn btn-ghost" type="button" data-i18n="clearUpload">Clear</button>
             </div>
 
             <div class="field" style="margin-top:12px;">
@@ -483,17 +561,15 @@
         <!-- OpenAI API Key -->
         <div class="card">
           <div class="card-body">
-            <div class="row" style="gap:5px; align-items:center;">
-            <label style="min-width:130px; font-weight:700">OpenAI API Key</label>
-            <input id="openaiKey" type="password" placeholder="sk-..." style="flex:1;" />
-            <button id="saveKeyBtn" type="button">Save</button>
-            <button id="clearKeyBtn" type="button">Clear</button>
-          </div>
+            <div class="row" style="gap:5px; align-items:center; margin-bottom: 12px;">
+              <label style="min-width:130px; font-weight:700" data-i18n="apiKeyLabel">OpenAI API Key</label>
+              <input id="openaiKey" type="password" placeholder="sk-..." style="flex:1;" />
+              <button id="saveKeyBtn" type="button" data-i18n="saveKey">Save</button>
+              <button id="clearKeyBtn" type="button" data-i18n="clearKey">Clear</button>
             </div>
-            <div class="muted" style="margin:8px; line-height:1.4;">
-            No GPU on this Space. Please provide your own OpenAI key to enable answers.
-            Get a key from <span style="font-family:monospace;">platform.openai.com/api-keys</span>.
-            The key is stored only in your browser session.
+
+            <div class="muted" id="apiKeyHint" style="line-height:1.4;">
+              <!-- 内容由 JS 动态填充 -->
             </div>
           </div>
         </div>
@@ -501,6 +577,128 @@
     </div>
 
     <script>
+      // ==================== 多语言支持 ====================
+      const translations = {
+        en: {
+          subtitle: "Contract Law · RAG",
+          newChat: "New chat",
+          send: "Send",
+          clear: "Clear",
+          evidences: "Evidences",
+          expand: "Expand",
+          collapse: "Collapse",
+          askHint: "Ask a question to see citations.",
+          noCitations: "No citations returned.",
+          searching: "Searching citations…",
+          generating: "Generating answer…",
+          thinking: "Thinking…",
+          uploadPdf: "Upload PDF",
+          uploadDesc: "Upload a PDF to extend corpus",
+          uploadNoFile: "Please choose a PDF file.",
+          uploadPdfOnly: "Only PDF files are supported.",
+          uploadFailed: "Upload failed:",
+          uploading: "Uploading:",
+          maxSize: "Max 10MB",
+          upload: "Upload",
+          clearUpload: "Clear",
+          indexingScheduled: "Indexing scheduled.",
+          indexError: "Index error",
+          indexReady: "Index ready.",
+          disclaimer: "Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.",
+          placeholder: "Type your legal question… ",
+          chooseFile: "Choose File",
+          noFileChosen: "No file chosen",
+          apiKeyLabel: "OpenAI API Key",
+          saveKey: "Save",
+          clearKey: "Clear",
+          apiKeyHint: "Please provide your OpenAI key to enable answers.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session."
+        },
+        zh: {
+          subtitle: "合同法 · RAG",
+          newChat: "新对话",
+          send: "发送",
+          clear: "清空",
+          evidences: "法律依据",
+          expand: "展开",
+          collapse: "收起",
+          askHint: "提出问题后可查看相关法律依据",
+          noCitations: "未返回依据。",
+          searching: "正在检索依据…",
+          generating: "正在生成答案…",
+          thinking: "思考中…",
+          uploadPdf: "上传 PDF",
+          uploadDesc: "上传 PDF 扩展语料",
+          uploadNoFile: "请选择一个 PDF 文件",
+          uploadPdfOnly: "仅支持 PDF 文件",
+          uploadFailed: "上传失败：",
+          uploading: "正在上传：",
+          maxSize: "最大 10MB",
+          upload: "上传",
+          clearUpload: "清除",
+          indexingScheduled: "索引任务已安排",
+          indexError: "索引错误",
+          indexReady: "索引已完成",
+          disclaimer: "免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。",
+          placeholder: "输入你的法律问题…",
+          chooseFile: "选择文件",
+          noFileChosen: "未选择任何文件",
+          apiKeyLabel: "OpenAI API Key",
+          saveKey: "保存",
+          clearKey: "清除",
+          apiKeyHint: "需提供 OpenAI API Key 才能正常回答。\n请从 <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a> 获取密钥。\n密钥仅保存在您当前浏览器会话中，不会上传。"
+        }
+      };
+
+      let currentLang = navigator.language.startsWith('zh') ? 'zh' : 'en';
+
+      function applyLanguage(lang) {
+        currentLang = lang;
+
+        // 更新所有 data-i18n 元素
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.dataset.i18n;
+          if (translations[lang][key]) {
+            el.textContent = translations[lang][key];
+          }
+        });
+
+        // placeholder
+        questionInput.placeholder = translations[lang].placeholder;
+
+        // 免责声明
+        disclaimer.innerHTML = translations[lang].disclaimer.replace('\n', '<br />');
+
+        // 语言按钮高亮
+        document.querySelector('.lang-en').classList.toggle('active', lang === 'en');
+        document.querySelector('.lang-zh').classList.toggle('active', lang === 'zh');
+
+        // 展开/收起按钮
+        const isOpen = !evidenceBody.classList.contains("collapsed");
+        // evidenceToggleText.textContent = isOpen ? translations[lang].collapse : translations[lang].expand;
+
+        // Send 按钮状态文字
+        sendBtn.textContent = state.busy ? translations[lang].thinking : translations[lang].send;
+
+        // 文件选择按钮文字
+          fileButtonText.textContent = translations[lang].chooseFile;
+
+          // 当前文件名显示（如果有文件）
+          if (pdfFile.files.length > 0) {
+            fileNameDisplay.textContent = pdfFile.files[0].name;
+          } 
+
+          // OpenAI API Key 说明文字
+          apiKeyHint.innerHTML = translations[lang].apiKeyHint.replace(/\n/g, '<br />');
+
+      }
+
+      // 语言切换事件
+      document.getElementById('langSwitch').addEventListener('click', () => {
+        const newLang = currentLang === 'en' ? 'zh' : 'en';
+        applyLanguage(newLang);
+      });
+
+
       const $ = (sel) => document.querySelector(sel);
 
       const chatList = $("#chatList");
@@ -509,8 +707,9 @@
       const sendBtn = $("#sendBtn");
       const clearBtn = $("#clearBtn");
       const newChatBtn = $("#newChatBtn");
+      const disclaimer = $("#disclaimer");
 
-      // Evidence (two-stage)
+      // Evidence
       const evidenceToggle = $("#evidenceToggle");
       const evidenceToggleText = $("#evidenceToggleText");
       const evidenceToggleIcon = evidenceToggle?.querySelector(".chev");
@@ -522,20 +721,23 @@
       const clearUploadBtn = $("#clearUploadBtn");
       const uploadStatus = $("#uploadStatus");
 
-      const pdfHint = document.getElementById("pdfHint");
-      const pdfFile = document.getElementById("pdfFile");
+      const pdfHint = $("#pdfHint");
+      const pdfFile = $("#pdfFile");
 
-      const openaiKeyInput = document.getElementById("openaiKey");
-      const saveKeyBtn = document.getElementById("saveKeyBtn");
-      const clearKeyBtn = document.getElementById("clearKeyBtn");
+      const openaiKeyInput = $("#openaiKey");
+      const saveKeyBtn = $("#saveKeyBtn");
+      const clearKeyBtn = $("#clearKeyBtn");
       const KEY_STORAGE = "legalrag_openai_api_key";
 
       const state = { busy: false, hasAsked: false };
 
       const MAX_MB = 10;
       const MAX_BYTES = MAX_MB * 1024 * 1024;
+      const fileButtonText = $("#fileButtonText");
+      const fileNameDisplay = $("#fileNameDisplay");
+      const apiKeyHint = $("#apiKeyHint");
 
-      // restore key from session
+      // restore key
       try {
         const saved = sessionStorage.getItem(KEY_STORAGE);
         if (saved && openaiKeyInput) openaiKeyInput.value = saved;
@@ -571,7 +773,7 @@
         state.busy = on;
         sendBtn.disabled = on;
         questionInput.disabled = on;
-        sendBtn.textContent = on ? "Thinking…" : "Send";
+        sendBtn.textContent = on ? translations[currentLang].thinking : translations[currentLang].send;
       }
 
       function getOpenAIKey() {
@@ -583,13 +785,11 @@
         return !evidenceBody.classList.contains("collapsed");
       }
 
-      function setEvidenceOpen(open){
+      function setEvidenceOpen(open) {
         evidenceBody.classList.toggle("collapsed", !open);
-        evidenceToggle.setAttribute("aria-expanded", open ? "true" : "false");
-        // evidenceToggleText.textContent = open ? "Collapse / 收起" : "Expand / 展开";
-        if (evidenceToggleIcon) evidenceToggleIcon.textContent = open ? "▴": "▾" ;
+        evidenceToggle.setAttribute("aria-expanded", open ? "true" : "false"); 
+        if (evidenceToggleIcon) evidenceToggleIcon.textContent = open ? "▴" : "▾";
       }
-
 
       function normalizeHits(hits) {
         if (!Array.isArray(hits)) return [];
@@ -607,7 +807,7 @@
 
         if (!rows.length) {
           evidenceHint.style.display = "block";
-          evidenceHint.textContent = "No citations returned.";
+          evidenceHint.textContent = translations[currentLang].noCitations;
           evidenceList.innerHTML = "";
           return;
         }
@@ -659,9 +859,9 @@
 
         evidenceList.innerHTML = "";
         evidenceHint.style.display = "block";
-        evidenceHint.textContent = "Ask a question to see citations.";
+        evidenceHint.textContent = translations[currentLang].askHint;
 
-        setEvidenceOpen(false); // default collapsed
+        setEvidenceOpen(false);
       }
 
       async function uploadPdfFile(file) {
@@ -759,41 +959,39 @@
       uploadBtn?.addEventListener("click", async () => {
         const file = pdfFile?.files?.[0];
         if (!file) {
-          uploadStatus.textContent = "请选择一个 PDF 文件 / Please choose a PDF file.";
+          uploadStatus.textContent = translations[currentLang].uploadNoFile;
+          fileNameDisplay.textContent = translations[currentLang].noFileChosen;
           return;
         }
         if (!/\.pdf$/i.test(file.name)) {
-          uploadStatus.textContent = "仅支持 PDF 文件 / PDF only.";
+          uploadStatus.textContent = translations[currentLang].uploadPdfOnly;
           return;
         }
 
         uploadBtn.disabled = true;
         clearUploadBtn.disabled = true;
-        uploadStatus.textContent = `Uploading: ${file.name} ...`;
+        uploadStatus.textContent =  `${translations[currentLang].uploading} ${file.name} ...`;
 
         try {
           const data = await uploadPdfFile(file);
           uploadStatus.textContent =
-            `Uploaded: ${data.filename}\n` +
-            `doc_id: ${data.doc_id}\n` +
-            `chunks: ${data.num_chunks}\n\n` +
-            `Preview:\n${data.text_preview || ""}\n\n` +
-            `Indexing scheduled.`;
+            `${translations[currentLang].uploaded}: ${data.filename}\n` +
+            `${translations[currentLang].docId}: ${data.doc_id}\n` +
+            `${translations[currentLang].chunks}: ${data.num_chunks}\n\n` +
+            `${translations[currentLang].preview}:\n${data.text_preview || ""}\n\n` +
+            `${translations[currentLang].indexingScheduled}`;
 
           const st = await pollIngestStatus(data.doc_id);
           if (st?.error && st.error !== null && st.error !== "not_found") {
-            uploadStatus.textContent += `\n\nIndex error: ${st.error}`;
+            uploadStatus.textContent += `\n\n${translations[currentLang].indexError}: ${st.error}`;
           } else if (st?.faiss === "done" || st?.bm25 === "done") {
             uploadStatus.textContent =
-              `Index ready.\n` +
-              `doc_id: ${data.doc_id}\n` +
-              `faiss: ${st?.faiss || "unknown"} (added: ${st?.added ?? 0})\n` +
-              `bm25: ${st?.bm25 || "unknown"}\n`;
+             `${translations[currentLang].indexReady}\n`;
           } else if (st?.error === "timeout") {
-            uploadStatus.textContent += `\n\nIndexing is in process. You can continue chatting; it will become available once finished.`;
+            uploadStatus.textContent += `\n\n${translations[currentLang].indexingInProcess}`;
           }
         } catch (err) {
-          uploadStatus.textContent = `Upload failed: ${err?.message || String(err)}`;
+          uploadStatus.textContent =  `${translations[currentLang].uploadFailed}: ${err?.message || String(err)}`;
         } finally {
           uploadBtn.disabled = false;
           clearUploadBtn.disabled = false;
@@ -802,11 +1000,18 @@
       });
 
       clearUploadBtn?.addEventListener("click", () => {
-        if (pdfFile) pdfFile.value = "";
-        uploadStatus.textContent = "";
+        if (pdfFile) pdfFile.value = "";  // 清空文件选择框
+        if (fileNameDisplay) fileNameDisplay.textContent = ""; // 清空文件名显示
+        uploadStatus.textContent = "";   // 清空上传状态文本
       });
 
-      pdfFile.addEventListener("change", updatePdfHintVisibility);
+      // 文件选择后更新显示文字
+      pdfFile.addEventListener('change', () => {
+        if (pdfFile.files.length > 0) {
+          fileNameDisplay.textContent = pdfFile.files[0].name;
+        }  
+        updatePdfHintVisibility();
+      });
 
       questionInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -824,6 +1029,7 @@
         resetConversation();
       });
 
+      // 提交问题 
       chatForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         if (state.busy) return;
@@ -831,36 +1037,41 @@
         const q = (questionInput.value || "").trim();
         if (!q) return;
 
-        // Stage 1: open evidence immediately, show placeholder
+        // 提交问题后立即隐藏 "Ask a question to see citations"
+        evidenceHint.style.display = "none"; 
+
+        // 设置展开/收起按钮
         setEvidenceOpen(true);
-        evidenceHint.style.display = "block";
-        evidenceHint.textContent = "Searching citations…";
         evidenceList.innerHTML = "";
 
         addMessage("user", q);
         questionInput.value = "";
 
+        // 显示正在搜索提示
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = translations[currentLang].searching;  // 显示正在搜索的提示
+
         setBusy(true);
         try {
-          // Stage 1: retrieve (fast)
-          const r = await callRetrieve(q);
-          renderEvidence(r.hits ?? []);
+          const r = await callRetrieve(q);  // 发起检索请求
+          renderEvidence(r.hits ?? []);  // 渲染检索结果
 
+          // 如果检索结果有内容，显示生成答案提示
           evidenceHint.style.display = "block";
-          evidenceHint.textContent = "Generating answer…";
+          evidenceHint.textContent = translations[currentLang].generating;  // 显示正在生成答案的提示
 
-          // Stage 2: answer (slow)
-          const a = await callAnswer(r.retrieval_id);
+          const a = await callAnswer(r.retrieval_id);  // 获取答案
           const answerRaw = String(a.answer ?? "");
           const answer = (answerRaw || "").trim() || "（未返回答案）";
           addMessage("assistant", answer);
 
+          // 完成生成，隐藏检索提示
+          evidenceHint.style.display = "none";  
+
           state.hasAsked = true;
         } catch (err) {
-          // keep evidence panel open; show error in chat
-          evidenceHint.style.display = "block";
-          // evidenceHint.textContent = "No citations returned.";
           addMessage("assistant", `请求失败：${err?.message || String(err)}`);
+          evidenceHint.style.display = "none";  // 隐藏提示
         } finally {
           setBusy(false);
           questionInput.focus();
@@ -868,6 +1079,7 @@
       });
 
       // Init
+      applyLanguage(currentLang);
       resetConversation();
     </script>
   </body>
