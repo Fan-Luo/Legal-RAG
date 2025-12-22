@@ -25,6 +25,7 @@ import time
 import threading
 start = time.time()
 
+
 logger = get_logger(__name__)
 
 
@@ -46,9 +47,7 @@ def extract_key_term(question: str) -> str:
             return q[len(p):].strip()
     return q
 
-
-SYSTEM_SPLIT = "========================================================================\nUSER MESSAGE"
-
+ 
 EXAMPLE_BLOCK_RE = re.compile(
     r"(?ms)^\[EXAMPLE\s*\|\s*(?P<qt>[A-Z_\-]+)\]\s*\n(?P<body>.*?)(?=^\[EXAMPLE\s*\||^\Z)"
 )
@@ -56,18 +55,6 @@ EXAMPLE_BLOCK_RE = re.compile(
 
 def _normalize_qt(qt: str) -> str:
     return (qt or "").strip().upper().replace("-", "_")
-
-
-def _split_system_user(prompt_text: str) -> Tuple[str, str]:
-    """
-    Split prompt file into system and user sections.
-    If no split marker found, treat entire file as system, empty user.
-    """
-    if SYSTEM_SPLIT in prompt_text:
-        sys_part, user_part = prompt_text.split(SYSTEM_SPLIT, 1)
-        user_part = "USER MESSAGE" + user_part
-        return sys_part.strip(), user_part.strip()
-    return prompt_text.strip(), ""
 
 
 def _extract_user_sections(user_part: str) -> Tuple[str, str, str]:
@@ -87,13 +74,26 @@ def _extract_user_sections(user_part: str) -> Tuple[str, str, str]:
     return prefix, examples, suffix
 
 
-def _select_one_example(examples_region: str, query_type: str) -> str:
+def _select_one_example(examples_region: Any, query_type: str) -> str:
     """
     Pick ONE example block matching query_type. Fallback to OTHER or first.
     Example block format:
       [EXAMPLE | PERFORMANCE]
       ...
     """
+    # If examples are provided as a dict, pick by normalized query type.
+    if isinstance(examples_region, dict):
+        qt = _normalize_qt(query_type)
+        # try exact match, then OTHER, then any
+        if qt in examples_region and str(examples_region.get(qt)).strip():
+            return str(examples_region.get(qt)).strip()
+        if "OTHER" in examples_region and str(examples_region.get("OTHER")).strip():
+            return str(examples_region.get("OTHER")).strip()
+        for v in examples_region.values():
+            if str(v).strip():
+                return str(v).strip()
+        return ""
+
     qt = _normalize_qt(query_type)
     blocks: Dict[str, str] = {}
     for m in EXAMPLE_BLOCK_RE.finditer(examples_region):
@@ -149,12 +149,20 @@ class RagPipeline:
         self.embed_model = AutoModel.from_pretrained(model_name).to(self.device)
         self.embed_model.eval()
 
-        # Prompt: system/user split + example selection
-        self.prompt_path = Path("legalrag/prompts/legal_rag_prompt.txt")
-        prompt_text = self.prompt_path.read_text(encoding="utf-8")
+        # prov = (getattr(self.llm, "provider", "") or "").strip().lower() 
+        self.zh_prompt_path = Path("legalrag/prompts/prompt_zh.json")
+        self.en_prompt_path = Path("legalrag/prompts/prompt_en.json")
 
-        self._sys_part, self._user_part = _split_system_user(prompt_text)
-        self._user_prefix, self._user_examples, self._user_suffix = _extract_user_sections(self._user_part)
+        zh_prompt_obj = json.loads(self.zh_prompt_path.read_text(encoding="utf-8"))
+        self._zh_sys_part = (zh_prompt_obj.get("system") or "").strip()
+        self._zh_user_prefix = (zh_prompt_obj.get("user_prefix") or "").strip()
+        self._zh_user_suffix = (zh_prompt_obj.get("user_suffix") or "").strip()
+        self._zh_user_examples = zh_prompt_obj.get("examples") or {}
+        en_prompt_obj = json.loads(self.en_prompt_path.read_text(encoding="utf-8"))
+        self._en_sys_part = (en_prompt_obj.get("system") or "").strip()
+        self._en_user_prefix = (en_prompt_obj.get("user_prefix") or "").strip()
+        self._en_user_suffix = (en_prompt_obj.get("user_suffix") or "").strip()
+        self._en_user_examples = en_prompt_obj.get("examples") or {}
 
     # -----------------------
     # Embedding
@@ -186,6 +194,7 @@ class RagPipeline:
     # Graph-aware retrieval
     # -----------------------
     def _graph_augmented_retrieval(self, question: str, decision: Any, top_k: int) -> List[RetrievalHit]:
+
         rag_hits = self.retriever.search(question, top_k=top_k)
         for h in rag_hits:
             h.source = "retriever"
@@ -251,6 +260,7 @@ class RagPipeline:
                 )
             )
 
+        logger.info("len(graph_hits)=", len(graph_hits))
         combined: List[RetrievalHit] = rag_hits + graph_hits
         if not combined:
             return []
@@ -273,32 +283,57 @@ class RagPipeline:
     # Prompt -> messages
     # -----------------------
     def _build_messages(self, question: str, hits: List[RetrievalHit], query_type: str) -> List[Dict[str, str]]:
-        # Context block
+
+        def is_chinese(text: str) -> bool:
+            """Simple check: returns True if text contains at least one Chinese character."""
+            return bool(re.search(r'[\u4e00-\u9fff]', text))
+        def _build_law_context_part(c, i, use_chinese):
+            if use_chinese:
+                # 中文版本
+                return (
+                    f"[候选条文 {i}]\n"
+                    f"章节：{(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
+                    f"条号：{getattr(c, 'article_no', '') or ''}\n"
+                    f"内容：{(getattr(c, 'text', '') or '').strip()}\n"
+                )
+            else:
+                # 英文版本
+                return (
+                    f"[Candidate Provision {i}]\n"
+                    f"Chapter/Section: {(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
+                    f"Article: {getattr(c, 'article_no', '') or ''}\n"
+                    f"Text: {(getattr(c, 'text', '') or '').strip()}\n"
+                )
+
+        is_chinese_question = is_chinese(question)
+
         law_context_parts: List[str] = []
         for i, h in enumerate(hits, start=1):
             c = getattr(h, "chunk", None)
             if c is None:
                 continue
-            law_context_parts.append(
-                f"[候选条文 {i}]\n"
-                f"条号：{getattr(c, 'article_no', '') or ''}\n"
-                f"章节：{(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
-                f"内容：{(getattr(c, 'text', '') or '').strip()}\n"
-            )
-        law_context = "\n\n".join(law_context_parts) if law_context_parts else "（当前未检索到相关条文）"
+            law_context_parts.extend(_build_law_context_part(c, i, is_chinese_question) )
+
+
+        # Choose user prefix
+        _user_prefix = self._zh_user_prefix if is_chinese_question else self._en_user_prefix
+        _user_suffix = self._zh_user_suffix if is_chinese_question else self._en_user_suffix
+        _sys_part = self._zh_sys_part if is_chinese_question else self._en_sys_part
+        _user_examples = self._zh_user_examples if is_chinese_question else self._en_user_examples
+
+
+        law_context = "\n\n".join(law_context_parts) if law_context_parts else ""
 
         # Pick ONE few-shot example based on query type
-        one_example = _select_one_example(self._user_examples, query_type)
+        one_example = _select_one_example(_user_examples, query_type)
 
         # Compile user message
-        user_compiled = "\n\n".join([s for s in [self._user_prefix, one_example, self._user_suffix] if s.strip()])
+        user_compiled = "\n\n".join([s for s in [_user_prefix, _user_suffix, one_example] if s.strip()])
         user_compiled = user_compiled.format(question=question, query_type=query_type, law_context=law_context)
 
-        # Enforce a stable, readable structure (minimal addition; does not change routing/retrieval)
-        user_compiled += "\n\n【输出格式】\n- 先用 2-3 行给出结论（可用‘结论：’开头）\n- 再分段给出：依据（条文编号+要点）、分析、可操作建议\n- 用空行分段，必要时用项目符号列表\n"
-
+        logger.info("[_build_messages] query_type=%s", query_type)
         return [
-            {"role": "system", "content": self._sys_part.strip()},
+            {"role": "system", "content": _sys_part.strip()},
             {"role": "user", "content": user_compiled.strip()},
         ]
 
@@ -340,6 +375,7 @@ class RagPipeline:
         qt_str = str(qt) if qt is not None else "OTHER"
 
         messages = self._build_messages(question, hits, qt_str)
+        # logger.info("[answer_from_hits] messages=%s", messages)
         llm = llm_override or self.llm
 
         try:
@@ -362,13 +398,16 @@ class RagPipeline:
 
         query_type = None
         if decision is not None:
-            query_type = getattr(decision, "query_type", None) or getattr(decision, "type", None)
+            query_type = getattr(decision, "query_type", None)  
+        else:
+            logger.info("[answer_stream_from_hits] decision is None")
+            query_type = "OTHER"
 
         try:
             messages = self._build_messages(question, hits, query_type)
         except TypeError:
             messages = self._build_messages(question, hits)
-
+        # logger.info("[answer_stream_from_hits] messages=%s", messages)
         logger.info("[TIMING] build_messages=%.3fs", time.time() - t_build0)
 
         llm = llm_override or self.llm
@@ -419,6 +458,7 @@ class RagPipeline:
             if item is None:
                 break
             yield item
+
 
     def answer(self, question: str, top_k: Optional[int] = None, llm_override: Optional[LLMClient] = None) -> RagAnswer:
         decision, hits, eff_top_k = self.retrieve(question, top_k=top_k)
