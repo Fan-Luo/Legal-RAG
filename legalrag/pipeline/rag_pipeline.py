@@ -133,7 +133,6 @@ class RagPipeline:
 
         # Retrieval components
         self.retriever = HybridRetriever(cfg)
-        self.graph = LawGraphStore(cfg)
 
         # LLM
         self.llm = LLMClient.from_config(cfg)
@@ -141,15 +140,8 @@ class RagPipeline:
         # Router
         self.router = QueryRouter(llm_client=self.llm, llm_based=cfg.routing.llm_based)
 
-        # Embedder for graph-aware rerank
-        model_name = cfg.retrieval.embedding_model
-        logger.info(f"[RAG] Loading embedding model for graph-aware rerank: {model_name}")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.embed_tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.embed_model = AutoModel.from_pretrained(model_name).to(self.device)
-        self.embed_model.eval()
 
-        # prov = (getattr(self.llm, "provider", "") or "").strip().lower() 
         self.zh_prompt_path = Path("legalrag/prompts/prompt_zh.json")
         self.en_prompt_path = Path("legalrag/prompts/prompt_en.json")
 
@@ -163,121 +155,7 @@ class RagPipeline:
         self._en_user_prefix = (en_prompt_obj.get("user_prefix") or "").strip()
         self._en_user_suffix = (en_prompt_obj.get("user_suffix") or "").strip()
         self._en_user_examples = en_prompt_obj.get("examples") or {}
-
-    # -----------------------
-    # Embedding
-    # -----------------------
-    def _encode_texts(self, texts: List[str]) -> np.ndarray:
-        if not texts:
-            return np.zeros((0, 768), dtype="float32")
-
-        with torch.no_grad():
-            inputs = self.embed_tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="pt",
-            )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            outputs = self.embed_model(**inputs)
-            last_hidden = outputs.last_hidden_state
-            mask = inputs["attention_mask"].unsqueeze(-1).type_as(last_hidden)
-            summed = (last_hidden * mask).sum(dim=1)
-            counts = mask.sum(dim=1).clamp(min=1e-8)
-            emb = (summed / counts).cpu().numpy().astype("float32")
-
-        norms = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8
-        return emb / norms
-
-    # -----------------------
-    # Graph-aware retrieval
-    # -----------------------
-    def _graph_augmented_retrieval(self, question: str, decision: Any, top_k: int) -> List[RetrievalHit]:
-
-        rag_hits = self.retriever.search(question, top_k=top_k)
-        for h in rag_hits:
-            h.source = "retriever"
-
-        seed_ids = [getattr(h.chunk, "id", None) or getattr(h.chunk, "article_id", None) for h in rag_hits]
-        seed_ids = [sid for sid in seed_ids if sid]
-
-        graph_nodes: List[Any] = []
-        if hasattr(self.graph, "walk"):
-            try:
-                graph_nodes = self.graph.walk(
-                    start_ids=seed_ids,
-                    depth=2,
-                    rel_types=["refers_to", "related", "same_topic", "parent_of"],
-                    limit=80,
-                )
-            except TypeError:
-                graph_nodes = self.graph.walk(start_ids=seed_ids, depth=2)
-        elif hasattr(self.graph, "get_neighbors"):
-            for sid in seed_ids:
-                try:
-                    graph_nodes.extend(self.graph.get_neighbors(sid, depth=2))
-                except TypeError:
-                    graph_nodes.extend(self.graph.get_neighbors(sid))
-
-        if getattr(decision, "query_type", None) == QueryType.DEFINITION and hasattr(self.graph, "get_definition_sources"):
-            term = extract_key_term(question)
-            try:
-                graph_nodes.extend(self.graph.get_definition_sources(term))
-            except Exception:
-                logger.warning("[RAG][graph] get_definition_sources failed", exc_info=True)
-
-        seen_ids = set(seed_ids)
-        unique_nodes: List[Any] = []
-        for n in graph_nodes:
-            aid = getattr(n, "article_id", None) or getattr(n, "id", None)
-            if not aid or aid in seen_ids:
-                continue
-            seen_ids.add(aid)
-            unique_nodes.append(n)
-
-        graph_hits: List[RetrievalHit] = []
-        for n in unique_nodes:
-            chunk = LawChunk(
-                id=getattr(n, "article_id", None) or getattr(n, "id", None),
-                law_name=getattr(n, "law_name", "民法典·合同编"),
-                chapter=getattr(n, "chapter", None),
-                section=getattr(n, "section", None),
-                article_no=getattr(n, "article_no", ""),
-                text=getattr(n, "text", ""),
-                source="graph",
-                start_char=None,
-                end_char=None,
-            )
-            graph_hits.append(
-                RetrievalHit(
-                    chunk=chunk,
-                    score=0.5,
-                    rank=-1,
-                    source="graph",
-                    graph_depth=getattr(n, "graph_depth", None),
-                    relations=getattr(n, "relations", None),
-                )
-            )
-
-        logger.info("len(graph_hits)=", len(graph_hits))
-        combined: List[RetrievalHit] = rag_hits + graph_hits
-        if not combined:
-            return []
-
-        vecs = self._encode_texts([h.chunk.text or "" for h in combined])
-        qvec = self._encode_texts([question])[0]
-
-        for h, v in zip(combined, vecs):
-            sem = cosine_similarity(qvec, v)
-            h.semantic_score = sem
-            h.score = 0.6 * float(h.score) + 0.4 * sem
-
-        combined.sort(key=lambda h: h.score, reverse=True)
-        top = combined[:top_k]
-        for i, h in enumerate(top, start=1):
-            h.rank = i
-        return top
+ 
 
     # -----------------------
     # Prompt -> messages
@@ -355,12 +233,9 @@ class RagPipeline:
         eff_top_k = int(base_k * getattr(decision, "top_k_factor", 1.0))
         eff_top_k = max(3, min(eff_top_k, 30))
 
-        if getattr(decision, "mode", None) == RoutingMode.GRAPH_AUGMENTED:
-            hits = self._graph_augmented_retrieval(question, decision, eff_top_k)
-        else:
-            hits = self.retriever.search(question, top_k=eff_top_k)
-            for h in hits:
-                h.source = "retriever"
+        hits = self.retriever.search(question, top_k=eff_top_k)
+        for h in hits:
+            h.source = getattr(h, 'source', 'retriever') 
 
         return decision, hits, eff_top_k
 
