@@ -51,19 +51,51 @@ class LLMConfig(BaseModel):
     no_repeat_ngram_size: int = 0  # 0 表示不启用    
 
 class RetrievalConfig(BaseModel):
+    # -------- Corpus --------
     processed_file: str = "processed/contract_law.jsonl"
     processed_dir: str = "data/processed"
     processed_glob: str = "*.jsonl"
+
+    # -------- FAISS (Dense) --------
     faiss_index_file: str = "index/faiss.index"
     faiss_meta_file: str = "index/faiss_meta.jsonl"
+    embedding_model: str = "BAAI/bge-base-zh-v1.5"
+
+    # -------- BM25 (Sparse) --------
     bm25_index_file: str = "index/bm25.pkl"
 
+    # -------- Retrieval control --------
     top_k: int = 10
     bm25_weight: float = 0.4
     dense_weight: float = 0.6
+    min_final_score: float = 1.0
 
-    embedding_model: str = "BAAI/bge-base-zh-v1.5"  # BAAI/bge-m3 for better performance
-    min_final_score: float = 1
+    # -------- ColBERT (Late Interaction) --------
+    enable_colbert: bool = False
+    colbert_index_path: str = "index/colbert"
+    colbert_meta_file: str = "index/colbert_meta.jsonl"
+    colbert_model_name: str = "colbert-ir/colbertv2.0"
+    colbert_candidate_k: int = top_k
+    colbert_weight: float = 0.35
+
+    # ColBERT build-time params
+    colbert_max_document_length: int = 300
+    colbert_split_documents: bool = False
+    colbert_overwrite: bool = True
+
+    # -------- HyDE --------
+    enable_hyde: bool = False
+
+    # -------- Rerank --------
+    enable_rerank: bool = False
+    rerank_top_n: int = 100
+    rerank_blend_beta: float = 0.35
+    rerank_model: str = "BAAI/bge-reranker-base"
+
+    # -------- Fusion --------
+    fusion_method: str = "rrf_norm_blend"
+    rrf_k: int = 60
+    rrf_blend_alpha: float = 0.6
 
 
 class PDFConfig(BaseModel):

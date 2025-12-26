@@ -37,7 +37,6 @@ class RetrievalHit(BaseModel):
     @classmethod
     def _coerce_chunk(cls, v):
         """
-        Notebook/热重载场景下，可能出现“旧 LawChunk 实例”：
         - v 是 dict：直接 validate
         - v 是任意 pydantic BaseModel：dump -> validate
         - v 是 LawChunk：直接返回
