@@ -1,80 +1,139 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+from filelock import FileLock
 
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
-from legalrag.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 
-def build_colbert_index(cfg: AppConfig, chunks: List[LawChunk]) -> None:
+def _chunk_to_dict(c: LawChunk) -> dict:
+    """Serialize LawChunk in a pydantic-friendly way."""
+    if hasattr(c, "model_dump"):
+        return c.model_dump()
+    if hasattr(c, "dict"):
+        return c.dict()
+    # Best-effort fallback
+    return dict(c.__dict__)
+
+
+def _ensure_colbert_importable() -> None:
     """
-    Build a ColBERTv2 index using RAGatouille.
-
-    Requires:
-      pip install ragatouille
-
-    Writes:
-      - cfg.retrieval.colbert_index_path (directory)
-      - cfg.retrieval.colbert_meta_file (jsonl mapping chunk.id -> LawChunk)
+    Supported setups:
+      1) pip/conda install of 'colbert-ai' (module name: 'colbert')
+      2) local clone at ./ColBERT added to sys.path by the caller/notebook
     """
     try:
-        from ragatouille import RAGPretrainedModel  # type: ignore
+        import colbert  # noqa: F401
     except Exception as e:
-        raise RuntimeError("ColBERT indexing requires `ragatouille`. Install with: pip install ragatouille") from e
+        raise RuntimeError(
+            "ColBERT is not importable. Install the official Stanford ColBERT package "
+            "(e.g., `pip install colbert-ai` or `conda install -c conda-forge colbert-ai`), "
+            "or clone https://github.com/stanford-futuredata/ColBERT and add it to PYTHONPATH."
+        ) from e
 
-    rcfg = cfg.retrieval
-    index_path = Path(getattr(rcfg, "colbert_index_path", "index/colbert"))
-    meta_file = Path(getattr(rcfg, "colbert_meta_file", "index/colbert_meta.jsonl"))
-    model_name = getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0")
 
-    index_path.parent.mkdir(parents=True, exist_ok=True)
+def _write_meta(meta_file: Path, chunks: List[LawChunk]) -> None:
+    """
+    Write a JSONL mapping from ColBERT passage-id (pid) to the original LawChunk.
+
+    We use pid == row index in the collection list passed to Indexer.index().
+    """
     meta_file.parent.mkdir(parents=True, exist_ok=True)
-
-    collection = [c.text for c in chunks]
-    doc_ids = [str(c.id) for c in chunks]
-
-    max_doc_len = int(getattr(rcfg, "colbert_max_document_length", 300))
-    split_docs = bool(getattr(rcfg, "colbert_split_documents", False))
-    overwrite = bool(getattr(rcfg, "colbert_overwrite", True))
-
-    logger.info("[ColBERT] model=%s", model_name)
-    colbert = RAGPretrainedModel.from_pretrained(model_name)
-
-    logger.info(
-        "[ColBERT] building index at %s (N=%d, max_document_length=%d, split=%s, overwrite=%s)",
-        index_path, len(collection), max_doc_len, split_docs, overwrite
-    )
-
-    try:
-        colbert.index(
-            collection=collection,
-            document_ids=doc_ids,
-            index_name=index_path.name,
-            index_path=str(index_path),
-            max_document_length=max_doc_len,
-            split_documents=split_docs,
-            overwrite=overwrite,
-        )
-    except TypeError:
-        colbert.index(
-            collection,
-            index_name=index_path.name,
-            max_document_length=max_doc_len,
-            split_documents=split_docs,
-            overwrite=overwrite,
-        )
-        logger.warning(
-            "[ColBERT] ragatouille may not support `document_ids`/`index_path` in this version. "
-            "Upgrade recommended for stable id mapping and deterministic index path."
-        )
-
     with meta_file.open("w", encoding="utf-8") as f:
-        for c in chunks:
-            f.write(c.model_dump_json() + "\n")
+        for pid, c in enumerate(chunks):
+            rec = {
+                "pid": pid,
+                "chunk": _chunk_to_dict(c),
+            }
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-    logger.info("[ColBERT] meta written: %s", meta_file)
-    logger.info("[ColBERT] index built: %s", index_path)
+
+def build_colbert_index(
+    cfg: AppConfig,
+    chunks: List[LawChunk],
+    override: bool = False,
+    *,
+    nbits: int = 2,
+    doc_maxlen: int = 300,
+    kmeans_niters: int = 4,
+    nranks: int = 1,
+    experiment: str = "legalrag",
+) -> Path:
+    """
+    Build an official ColBERTv2 (PLAID) index using Stanford ColBERT.
+
+    Parameters
+    ----------
+    cfg:
+        AppConfig. Uses:
+          - cfg.retrieval.enable_colbert
+          - cfg.retrieval.colbert_model_name
+          - cfg.retrieval.colbert_index_path
+          - cfg.retrieval.colbert_index_name
+          - cfg.retrieval.colbert_meta_file
+    chunks:
+        List[LawChunk] where chunk.text is the passage string.
+    override:
+        If True, overwrite any existing index of the same name.
+    nbits/doc_maxlen/kmeans_niters:
+        Standard PLAID indexing parameters (see ColBERT docs/notebooks).
+    nranks:
+        Number of GPUs to use (1 for single GPU; 0 for CPU-only where supported).
+    experiment:
+        ColBERT "experiment" namespace. This becomes a folder under ColBERT's root.
+
+    Returns
+    -------
+    Path:
+        The absolute path to the built ColBERT index folder.
+    """
+    rcfg = cfg.retrieval
+    enabled = bool(getattr(rcfg, "enable_colbert", False))
+    if not enabled:
+        raise RuntimeError("ColBERT is disabled: set cfg.retrieval.enable_colbert=True")
+
+    model_name: Optional[str] = getattr(rcfg, "colbert_model_name", None) or "colbert-ir/colbertv2.0"
+    index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "data/index/colbert")))
+    index_name: str = str(getattr(rcfg, "colbert_index_name", "legalrag"))
+    meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "data/index/colbert_meta.jsonl")))
+
+    _ensure_colbert_importable()
+
+    # Defensive: normalize docs
+    docs: List[str] = [(getattr(c, "text", "") or "").strip() for c in chunks]
+    if not any(docs):
+        raise RuntimeError("All chunks are empty; cannot build ColBERT index.")
+
+    # ColBERT writes under ColBERTConfig(root=...) and RunConfig(experiment=...)
+    lock = FileLock(str(index_path.with_suffix(".lock")))
+    with lock:
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        # Meta is used by our system to map pid -> LawChunk for evidence display.
+        _write_meta(meta_file, chunks)
+
+        # Build index
+        from colbert import Indexer
+        from colbert.infra import Run, RunConfig, ColBERTConfig
+
+        with Run().context(RunConfig(nranks=nranks, experiment=experiment)):
+            config = ColBERTConfig(
+                root=str(index_path),
+                doc_maxlen=doc_maxlen,
+                nbits=nbits,
+                kmeans_niters=kmeans_niters,
+            )
+            indexer = Indexer(checkpoint=model_name, config=config)
+            indexer.index(name=index_name, collection=docs, overwrite=override)
+
+            # Official API provides absolute path to index folder.
+            try:
+                abs_index = Path(indexer.get_index())
+            except Exception: 
+                abs_index = index_path / experiment / "indexes" / index_name
+
+    return abs_index

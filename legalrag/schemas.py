@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
-
-from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Any, Dict, List, Literal, Optional, Union
+from dataclasses import field
+from pydantic import BaseModel, ConfigDict, field_validator 
 
 
 class LawChunk(BaseModel):
@@ -12,44 +12,23 @@ class LawChunk(BaseModel):
     chapter: Optional[str] = None
     section: Optional[str] = None
     article_no: str
-    article_id: str # article_no 的数字编号
+    article_id: str  # article_no 的数字编号
     text: str
     source: Optional[str] = None
     start_char: Optional[int] = None
     end_char: Optional[int] = None
 
-
 class RetrievalHit(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
     chunk: LawChunk
     score: float
     rank: Optional[int] = None
-
     source: Literal["retriever", "graph", "rerank"] = "retriever"
     semantic_score: Optional[float] = None
     graph_depth: Optional[int] = None
     relations: Optional[List[str]] = None
     seed_article_id: Optional[str] = None
-    explain: Optional[Dict[str, Any]] = None
-
-    @field_validator("chunk", mode="before")
-    @classmethod
-    def _coerce_chunk(cls, v):
-        """
-        - v 是 dict：直接 validate
-        - v 是任意 pydantic BaseModel：dump -> validate
-        - v 是 LawChunk：直接返回
-        """
-        if isinstance(v, LawChunk):
-            return v
-        if isinstance(v, BaseModel):
-            return LawChunk.model_validate(v.model_dump())
-        if isinstance(v, dict):
-            return LawChunk.model_validate(v)
-        return v
-
-
+    score_breakdown: Optional[Dict[str, Any]] = None
 
 class QueryType(str, Enum):
     """
@@ -64,18 +43,15 @@ class QueryType(str, Enum):
     PROCEDURE = "procedure"    # 诉讼时效、期间起算、中断中止、举证责任、程序性问题
     OTHER = "other"   
 
-
 class RoutingMode(str, Enum):
     DIRECT_LLM = "direct_llm"
     RAG = "rag"
     GRAPH_AUGMENTED = "graph_augmented"
 
-
 class RoutingDecision(BaseModel):
     query_type: QueryType
     mode: RoutingMode
     top_k_factor: float = 1.0
-
 
 class RagAnswer(BaseModel):
     question: str
@@ -83,19 +59,28 @@ class RagAnswer(BaseModel):
     hits: List[RetrievalHit]
 
 
-class LawNode(BaseModel):
+class Neighbor(BaseModel):
+    """A directed edge from one article node to another."""
     article_id: str
-    article_no: str
+    relation: str = "neighbor"
+    conf: float = 1.0
+    evidence: Optional[Dict[str, Any]] = None
+
+class LawNode(BaseModel):
+    """Lightweight in-memory node. (Do NOT store query-time fields in JSONL.)"""
+    article_id: str
+    article_no: str = ""
+    law_name: Optional[str] = None
     title: Optional[str] = None
     chapter: Optional[str] = None
     section: Optional[str] = None
-    neighbors: List[str] = []
-    meta: Dict[str, Any] = {}
+    neighbors: List[Neighbor] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
 
-    # Pydantic v2 uses model_config
-    class Config:
-        arbitrary_types_allowed = True
-
+    # ---- query-time fields ----
+    graph_depth: Optional[int] = None
+    graph_parent: Optional[str] = None
+    relations: Optional[str] = None
 
 # Pydantic v2: resolve forward refs / Literal reliably
 try:

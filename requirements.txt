@@ -1,45 +1,38 @@
 # -------- Core framework --------
-fastapi
-uvicorn[standard]
-pydantic>=2.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0,<3.0
 
 # -------- Retrieval & NLP --------
-faiss-cpu
-sentence-transformers
-rank-bm25
-jieba
-numpy
-scikit-learn
-ragatouille
-
-# -------- Embeddings --------
-transformers>=4.39
-torch
-tiktoken
-
-# -------- LLM acceleration --------
-accelerate
+faiss-cpu>=1.7.4
+transformers==4.46.1 
+sentence-transformers==2.7.0
+rank-bm25>=0.2.2
+jieba>=0.42.1
+numpy>=1.26.4
+colbert-ai>=0.2.19 
+openai>=1.0
 
 # -------- PDF & OCR --------
+pypdf>=4.0
 pdfplumber
-pdf2image
-pytesseract
-Pillow
-python-multipart
+pdf2image>=1.17
+pytesseract>=0.3.13
+Pillow>=10.0
+
+# -------- Data --------
+pandas
+matplotlib
+scipy>=1.10
+networkx
 
 # -------- UI --------
-pyngrok
-streamlit
-httpx
-requests
-
-# -------- OpenAI --------
-openai
+requests>=2.31
+httpx>=0.25
 
 # -------- Utils --------
-loguru
-pyyaml
-tqdm
-
-# -------- Dev / Test --------
+loguru>=0.7
+pyyaml>=6.0
+tqdm>=4.66
+python-multipart
 pytest

@@ -2,82 +2,117 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
-from ragatouille import RAGPretrainedModel  
+
+
+def _ensure_colbert_importable() -> None:
+    try:
+        import colbert    
+    except Exception as e:
+        raise RuntimeError(
+            "ColBERT is not importable. Install the official Stanford ColBERT package "
+            "(e.g., `pip install colbert-ai` or `conda install -c conda-forge colbert-ai`), "
+            "or clone https://github.com/stanford-futuredata/ColBERT and add it to PYTHONPATH."
+        ) from e
+
+
+def _dict_to_chunk(d: dict) -> LawChunk: 
+    if hasattr(LawChunk, "model_validate"):
+        return LawChunk.model_validate(d)
+    return LawChunk.parse_obj(d)  # type: ignore[attr-defined]
 
 
 class ColBERTRetriever:
     """
-    ColBERT / late-interaction retriever backed by a prebuilt RAGatouille index.
+    ColBERT channel retriever using the official Stanford ColBERT Searcher.
 
-    Required artifacts (built by build_colbert_index.py):
-      - cfg.retrieval.colbert_index_path: directory containing the ColBERT index
-      - cfg.retrieval.colbert_meta_file: jsonl mapping chunk.id -> LawChunk (full metadata)
+    Contract:
+      - search(query, top_k) -> List[(LawChunk, score)]
     """
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
         rcfg = cfg.retrieval
 
-        self.enabled = bool(getattr(rcfg, "enable_colbert", False))
-        self.index_path = getattr(rcfg, "colbert_index_path", None)
-        self.meta_file = getattr(rcfg, "colbert_meta_file", "index/colbert_meta.jsonl")
+        self.enabled: bool = bool(getattr(rcfg, "enable_colbert", False))
+        self.index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "data/index/colbert")))
+        self.index_name: str = str(getattr(rcfg, "colbert_index_name", "legalrag"))
+        self.model_name: Optional[str] = getattr(rcfg, "colbert_model_name", None)  # kept for parity; not required at search time
+        self.meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "data/index/colbert_meta.jsonl")))
+        self.experiment: str = str(getattr(rcfg, "colbert_experiment", "legalrag"))
+        self.nranks: int = int(getattr(rcfg, "colbert_nranks", 1))
 
-        self._id2chunk: Dict[str, LawChunk] = {}
-        self._model = None
+        self._pid2chunk: Dict[int, LawChunk] = {}
+        self._collection: List[str] = []
+        self._searcher = None
 
         if not self.enabled:
             return
-        if RAGPretrainedModel is None:
-            raise RuntimeError("ColBERTRetriever requires `ragatouille`. Install with: pip install ragatouille")
-        if not self.index_path:
-            raise RuntimeError("cfg.retrieval.colbert_index_path is required when enable_colbert=True")
 
-        self._model = RAGPretrainedModel.from_index(self.index_path)
-        self._load_meta()
+        _ensure_colbert_importable()
+        self._load_meta_and_collection()
+        self._init_searcher()
 
-    def _load_meta(self) -> None:
-        meta_path = Path(self.meta_file)
-        if not meta_path.exists():
-            raise RuntimeError(f"ColBERTRetriever meta file not found: {meta_path}")
+    def _load_meta_and_collection(self) -> None:
+        if not self.meta_file.exists():
+            raise RuntimeError(
+                f"ColBERT meta file not found: {self.meta_file}. "
+                "Run build_colbert_index() first."
+            )
 
-        with meta_path.open("r", encoding="utf-8") as f:
+        pid2chunk: Dict[int, LawChunk] = {}
+        max_pid = -1
+
+        with self.meta_file.open("r", encoding="utf-8") as f:
             for line in f:
-                obj = json.loads(line)
-                chunk = LawChunk(**obj)
-                self._id2chunk[str(chunk.id)] = chunk
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                pid = int(rec["pid"])
+                chunk = _dict_to_chunk(rec["chunk"])
+                pid2chunk[pid] = chunk
+                max_pid = max(max_pid, pid)
 
-        if not self._id2chunk:
-            raise RuntimeError(f"ColBERTRetriever meta file is empty: {meta_path}")
+        if max_pid < 0:
+            raise RuntimeError(f"ColBERT meta file is empty: {self.meta_file}")
 
-    def search(self, query: str, top_k: int) -> List[Tuple[LawChunk, float]]:
-        """
-        Returns list of (LawChunk, score). Score is ColBERT similarity (higher is better).
+        # Reconstruct the collection in pid order (ColBERT passage ids refer to positions)
+        collection: List[str] = [""] * (max_pid + 1)
+        for pid, chunk in pid2chunk.items():
+            collection[pid] = (getattr(chunk, "text", "") or "").strip()
 
-        RAGatouille result keys vary by version; we handle common patterns:
-          - document_id / doc_id / id
-          - score
-        """
-        if not self.enabled or self._model is None:
+        self._pid2chunk = pid2chunk
+        self._collection = collection
+
+    def _init_searcher(self) -> None:
+        from colbert import Searcher
+        from colbert.infra import Run, RunConfig
+
+        with Run().context(RunConfig(nranks=self.nranks, experiment=self.experiment)):
+            self._searcher = Searcher(index=self.index_name, collection=self._collection)
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[LawChunk, float]]:
+        if not self.enabled:
+            return []
+        if not self._searcher:
+            raise RuntimeError("ColBERT Searcher is not initialized.")
+
+        query = (query or "").strip()
+        if not query:
             return []
 
-        res = self._model.search(query, k=int(top_k))
-        hits: List[Tuple[LawChunk, float]] = []
+        results = self._searcher.search(query, k=top_k)
+        pids, ranks, scores = results  # pids are ints (passage ids)
 
-        for r in res:
-            cid = r.get("document_id") or r.get("doc_id") or r.get("id")
-            if cid is None:
+        out: List[Tuple[LawChunk, float]] = []
+        for pid, score in zip(pids, scores):
+            try:
+                chunk = self._pid2chunk[int(pid)]
+                out.append((chunk, float(score)))
+            except Exception:
                 continue
-            cid = str(cid)
-
-            chunk = self._id2chunk.get(cid)
-            if chunk is None:
-                continue
-
-            score = float(r.get("score", 0.0))
-            hits.append((chunk, score))
-
-        return hits
+        return out

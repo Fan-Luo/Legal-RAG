@@ -5,77 +5,79 @@ build-backend = "hatchling.build"
 [project]
 name = "legal-rag"
 version = "0.1.0"
-description = "Graph-aware RAG system for Chinese Contract Law (Legal-RAG)"
+description = "Graph-aware RAG system for Legal-RAG"
 readme = "README.md"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 
 authors = [
   { name = "Fan Luo", email = "luofan813@gmail.com" }
 ]
 
-
 dependencies = [
   #  Web / API 
-  "fastapi",
-  "uvicorn[standard]",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
 
   #  数据模型 / 配置 
   "pydantic>=2.0.0",
-  "pyyaml",
+  "pyyaml>=6.0",
 
   #  日志 
-  "loguru",
+  "loguru>=0.7",
 
   #  数值 / 数据处理 
   "numpy",
   "pandas",
+  "matplotlib>=3.8.0",
+  "scipy>=1.10",
 
-  #  向量 / 检索 
-  "sentence-transformers>=2.2.0",
-  "faiss-cpu",
-  "rank-bm25",
-  "jieba",
+  # Retrieval
+  "faiss-cpu>=1.7.4",
+  "rank-bm25>=0.2.2",
+  "jieba>=0.42.1",
 
-  #  LLM / 模型 
-  "torch",
-  "transformers>=4.40.0",
-  "tiktoken",
+  # Embeddings 
+  "transformers==4.46.1",
+  "sentence-transformers==2.7.0",
 
-  #  PDF & OCR 
-  "pdfplumber",
-  "pdf2image",
-  "pytesseract",
-  "Pillow",
+  # ColBERT
+  "colbert-ai>=0.2.19", 
+
+  # Providers
+  "openai>=1.0",
 
   #  UI / HTTP 
-  "gradio",
-  "httpx",
+  "requests>=2.31",
+  "httpx>=0.25",
 
-  # 如果用到  openai，可以加上这一行：
-  "openai>=1.0.0",
-
-  # Notebook 里用到的可视化 
-  "matplotlib>=3.8.0"
+  # Misc
+  "tqdm>=4.66",
+  "pdfplumber",
+  "jedi>=0.16",
+  "networkx"
 ]
-
-[project.urls]
-Homepage = "https://github.com/Fan-Luo/Legal-RAG"
-Repository = "https://github.com/Fan-Luo/Legal-RAG"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=7.0.0",
-  "pytest-cov>=4.0.0",
-  "black>=24.0.0",
-  "isort>=5.13.0",
-  "mypy>=1.8.0"
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "black>=24.0",
+  "isort>=5.13",
+  "mypy>=1.8",
 ]
 
 notebooks = [
-  "jupyter>=1.0.0",
-  "ipykernel>=6.29.0",
-  "notebook>=7.0.0"
+  "jupyter>=1.0",
+  "ipykernel>=6.29",
+  "notebook>=7.0",
+]
+
+pdf = [
+  "pypdf>=4.0",
+  "pdf2image>=1.17",
+  "pytesseract>=0.3.13",
+  "Pillow>=10.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -99,12 +101,10 @@ testpaths = ["tests"]
 
 [tool.black]
 line-length = 88
-target-version = ["py310"]
 
 [tool.isort]
 profile = "black"
 
 [tool.mypy]
-python_version = "3.10"
 ignore_missing_imports = true
 strict = false
