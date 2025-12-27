@@ -1,4 +1,3 @@
-# legalrag/retrieval/incremental_indexer.py
 from __future__ import annotations
 
 import json
@@ -16,7 +15,7 @@ from legalrag.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class IncrementalIndexer:
+class IncrementalDenseBuilder:
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
         self.vs = VectorStore(cfg)

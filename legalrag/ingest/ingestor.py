@@ -156,17 +156,47 @@ class IngestResult:
 class PDFIngestor:
     """
     PDF -> extract text (OCR fallback) -> normalize -> chunk -> LawChunk -> persist JSONL
-
-    Notes:
-    - This ingestor is for *case documents / evidence PDFs*.
-      It does NOT parse "chapter/article" like 民法典法条 (that belongs to preprocess_law.py).
-    - Output chunks are stored as LawChunk with:
+    Output chunks are stored as LawChunk with:
         - article_id: doc-local chunk id (stable)
         - article_no: display label, e.g. "DocChunk-0003"
     """
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
+
+    async def ingest(self, file):
+        """Adapter: FastAPI UploadFile -> temp PDF -> ingest_pdf_to_jsonl.
+        This method only adapts I/O; it preserves IngestResult semantics.
+        """
+        from pathlib import Path
+        import tempfile
+        from fastapi import UploadFile
+
+        if not isinstance(file, UploadFile):
+            raise TypeError("file must be fastapi.UploadFile")
+
+        suffix = Path(file.filename or "upload.pdf").suffix or ".pdf"
+        tmp_path: Path | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp_path = Path(tmp.name)
+                tmp.write(await file.read())
+
+            # reset stream for any downstream use
+            try:
+                await file.seek(0)
+            except Exception:
+                pass
+
+            return self.ingest_pdf_to_jsonl(tmp_path)
+
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def ingest_pdf_to_jsonl(
         self,
