@@ -12,11 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from filelock import FileLock
 import time
 from legalrag.config import AppConfig
-from legalrag.ingest.ingestor import PDFIngestor
 from legalrag.llm.client import LLMClient
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
-from legalrag.retrieval.incremental_indexer import IncrementalIndexer
+from legalrag.retrieval.builders.incremental_builder import IncrementalDenseBuilder
+from legalrag.ingest.service import IngestService
 
 from legalrag.utils.logger import get_logger
 
@@ -26,14 +26,13 @@ app = FastAPI(title="Legal-RAG API", version="0.2.0")
 
 CFG: Optional[AppConfig] = None
 pipeline: Optional[RagPipeline] = None
+ingest_service: IngestService | None = None
 
-# Pipeline init state (do NOT use these to gate /health or /)
 PIPELINE_READY = False
 PIPELINE_ERROR: Optional[str] = None
 
 
 def detect_gpu() -> bool:
-    """Fast, safe GPU detection for status (never raises)."""
     try:
         import torch  # type: ignore
         return bool(torch.cuda.is_available())
@@ -73,9 +72,8 @@ def load_cfg() -> AppConfig:
             cfg.llm.provider = "disabled"
             chosen = ""
 
-    # Optional: some configs may not have cfg.llm.model; ignore if absent.
     try:
-        cfg.llm.model = chosen  # type: ignore[attr-defined]
+        cfg.llm.model = chosen   
     except Exception:
         pass
 
@@ -90,7 +88,6 @@ logger.info(f"[boot] UI_PATH={UI_PATH} exists={UI_PATH.exists()}")
 @app.get("/", include_in_schema=False)
 def root():
     index = UI_PATH / "index.html"
-    # 让默认页面就是 UI
     if index.exists():
         return FileResponse(str(index))
     # fallback 
@@ -114,10 +111,8 @@ def ready():
     }
 
 if UI_PATH.exists():
-    # Serve static UI under /ui
     app.mount("/ui", StaticFiles(directory=str(UI_PATH), html=True), name="ui")
 
-    # Ensure /ui/ returns the index.html explicitly (some platforms/probes prefer explicit route)
     @app.get("/ui/", include_in_schema=False)
     def ui_index():
         index = UI_PATH / "index.html"
@@ -166,6 +161,7 @@ def build_pipeline_sync():
     global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR
     PIPELINE_READY = False
     PIPELINE_ERROR = None
+    ingest_service = IngestService(CFG)
     try:
         logger.info("[API] 初始化 RAG Pipeline...")
         CFG = load_cfg()
@@ -176,7 +172,6 @@ def build_pipeline_sync():
         PIPELINE_ERROR = repr(e)
         pipeline = None
         logger.exception("[API] RAG Pipeline 初始化失败")
-
 
 @app.on_event("startup")
 async def startup_event():
@@ -302,6 +297,7 @@ async def rag_retrieve(body: dict, request: Request):
         logger.exception(f"RAG retrieve failed: {e}")
         raise HTTPException(status_code=500, detail="RAG retrieve failed")
 
+
 @app.post("/rag/answer")
 async def rag_answer(body: dict, request: Request):
     """
@@ -398,12 +394,11 @@ async def rag_answer(body: dict, request: Request):
 
             # 优先使用 pipeline 的异步流式生成函数
             stream_fn = getattr(pipeline, "answer_stream_from_hits", None)
-            final_text = ""  # 我们不再需要后端累积，因为前端已处理
-
+            
             if callable(stream_fn):
                 logger.info(f"callable(stream_fn)")
                 last_ping = time.time()
-                # 真正的实时 token 流式输出
+                # 实时 token 流式输出
                 async for chunk in stream_fn(
                     question, hits, decision=decision, llm_override=llm_override
                 ):
@@ -416,25 +411,24 @@ async def rag_answer(body: dict, request: Request):
                     if chunk:
                         yield _sse("token", {"text": chunk, "dt": dt})
 
-                # 不需要再调用 answer_from_hits，避免重复计算
-                # 直接发送 done，只包含 rid（前端用 acc 作为最终答案）
                 yield _sse("done", {"ok": True, "dt": round(time.time()-t0, 3)})
 
-            # else:
-            #     # fallback：先生成完整答案，再手动分块发送
-            #     final_ans = pipeline.answer_from_hits(
-            #         question, hits, decision=decision, llm_override=llm_override
-            #     )
-            #     final_text = _get(final_ans, "answer", "") or _get(final_ans, "text", "") or ""
+            else:
+                # fallback：先生成完整答案，再手动分块发送
+                final_text = "" 
+                final_ans = pipeline.answer_from_hits(
+                    question, hits, decision=decision, llm_override=llm_override
+                )
+                final_text = _get(final_ans, "answer", "") or _get(final_ans, "text", "") or ""
 
-            #     chunk_size = 30
-            #     for i in range(0, len(final_text), chunk_size):
-            #         yield _sse("token", final_text[i : i + chunk_size])
-            #         await asyncio.sleep(0.01)  # 轻微延时，防止同步阻塞事件循环
+                chunk_size = 30
+                for i in range(0, len(final_text), chunk_size):
+                    yield _sse("token", final_text[i : i + chunk_size])
+                    await asyncio.sleep(0.01)  # 轻微延时，防止同步阻塞事件循环
 
-            #     yield _sse("done", {
-            #         "retrieval_id": rid or None
-            #     })
+                yield _sse("done", {
+                    "retrieval_id": rid or None
+                })
 
         except Exception as e:
             logger.exception(f"RAG answer stream failed: {e}")
@@ -478,82 +472,20 @@ async def rag_query(body: dict, request: Request):
     # if body.get("top_k") is not None:
     #     answer_body["top_k"] = body["top_k"]
 
-    # 直接返回 rag_answer 的响应（无论是 JSON 还是 StreamingResponse）
     return await rag_answer(answer_body, request)
 
 # -----------------------
 # PDF ingest
 # -----------------------
-INGEST_STATUS = {}  # doc_id -> {"faiss": "...", "added": int, "bm25": "...", "error": str|None}
-
-
-def faiss_index_job(jsonl_path: str, doc_id: str):
-    try:
-        assert CFG is not None
-        added = IncrementalIndexer(CFG).add_jsonl(jsonl_path)
-        INGEST_STATUS.setdefault(doc_id, {})
-        INGEST_STATUS[doc_id].update({"faiss": "done", "added": int(added)})
-        logger.info(f"[FAISS] indexed doc_id={doc_id} added={added} jsonl={jsonl_path}")
-    except Exception as e:
-        INGEST_STATUS.setdefault(doc_id, {})
-        INGEST_STATUS[doc_id].update({"faiss": "failed", "error": str(e)})
-        logger.exception(f"[FAISS] indexing failed doc_id={doc_id} jsonl={jsonl_path}: {e}")
-
-
-def bm25_rebuild_job(doc_id: str):
-    try:
-        assert CFG is not None
-        lock = FileLock(str(Path(CFG.retrieval.bm25_index_file).with_suffix(".lock")))
-        with lock:
-            BM25Retriever(CFG).build()
-        INGEST_STATUS.setdefault(doc_id, {})
-        INGEST_STATUS[doc_id].update({"bm25": "done"})
-        logger.info(f"[BM25] rebuild done doc_id={doc_id}")
-    except Exception as e:
-        INGEST_STATUS.setdefault(doc_id, {})
-        INGEST_STATUS[doc_id].update({"bm25": "failed", "error": str(e)})
-        logger.exception(f"[BM25] rebuild failed doc_id={doc_id}: {e}")
-
-
 @app.post("/ingest/pdf")
-async def ingest_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Please upload a PDF file")
-
-    if CFG is None:
-        raise HTTPException(status_code=503, detail="Server is warming up")
-
-    contents = await file.read()
-    max_mb = 10
-    if len(contents) > max_mb * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"File exceeds {max_mb}MB limit")
-
-    tmp_path = Path(CFG.paths.upload_dir) / file.filename
-    tmp_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path.write_bytes(contents)
-
-    try:
-        ingestor = PDFIngestor(CFG)
-        result = ingestor.ingest_pdf_to_jsonl(tmp_path, law_name=f"用户上传PDF-{file.filename}")
-
-        if background_tasks is not None:
-            INGEST_STATUS[result.doc_id] = {"faiss": "scheduled", "added": 0, "bm25": "scheduled", "error": None}
-            background_tasks.add_task(faiss_index_job, result.jsonl_path, result.doc_id)
-            background_tasks.add_task(bm25_rebuild_job, result.doc_id)
-
-        return {
-            "filename": file.filename,
-            "doc_id": result.doc_id,
-            "num_chunks": result.num_chunks,
-            "text_preview": result.preview,
-            "jsonl_path": result.jsonl_path,
-            "index_status": "scheduled",
-        }
-    except Exception as e:
-        logger.exception(f"PDF ingest failed: {e}")
-        raise HTTPException(status_code=500, detail="PDF ingest failed")
+async def ingest_pdf(file: UploadFile, background_tasks: BackgroundTasks):
+    if ingest_service is None:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    return await ingest_service.ingest_pdf_and_schedule(file, background_tasks)
 
 
 @app.get("/ingest/status/{doc_id}")
 def ingest_status(doc_id: str):
-    return INGEST_STATUS.get(doc_id, {"error": "not_found"})
+    if ingest_service is None:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    return ingest_service.get_status(doc_id)
