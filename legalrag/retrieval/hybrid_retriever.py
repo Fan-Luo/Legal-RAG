@@ -8,9 +8,9 @@ from legalrag.schemas import RetrievalHit
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.retrieval.dense_retriever import DenseRetriever
 from legalrag.retrieval.graph_retriever import GraphRetriever
-from legalrag.retrieval.colbert_retriever import ColBERTRetriever   
-
+from legalrag.retrieval.colbert_retriever import ColBERTRetriever
 from legalrag.retrieval.rerankers import CrossEncoderReranker, LLMReranker   
+
 
 
 def _minmax(scores: Sequence[float]) -> List[float]:
@@ -51,7 +51,7 @@ class HybridRetriever:
     Channels:
       - dense (FAISS)
       - bm25
-      - colbert (optional)
+      - colbert  
       - graph (optional; enabled only under RoutingMode.GRAPH_AUGMENTED)
 
     Fusion methods (cfg.retrieval.fusion_method):
@@ -72,12 +72,11 @@ class HybridRetriever:
         self.dense = DenseRetriever(self.cfg)
         self.bm25 = BM25Retriever(self.cfg)
 
-        self.colbert = None
+
         if getattr(self.cfg.retrieval, "enable_colbert", False) and ColBERTRetriever is not None:
-            try:
-                self.colbert = ColBERTRetriever(self.cfg)  # type: ignore
-            except Exception:
-                self.colbert = None
+            self.colbert = ColBERTRetriever(self.cfg)  
+        else:
+            self.colbert = None
 
         self.graph = GraphRetriever(self.cfg)
 
@@ -97,20 +96,16 @@ class HybridRetriever:
 
     def search(self, question: str, top_k: int = 10, decision: Any = None) -> List[RetrievalHit]:
         rcfg = self.cfg.retrieval
-        eff_top_k = max(1, int(top_k))
+        top_k = max(1, int(top_k))
+        eff_top_k  = top_k * 8 
 
-        # 1) Candidate generation (oversample)
-        dense_k = int(getattr(rcfg, "dense_candidate_k", eff_top_k * 8))
-        bm25_k = int(getattr(rcfg, "bm25_candidate_k", eff_top_k * 8))
-        colbert_k = int(getattr(rcfg, "colbert_candidate_k", eff_top_k * 8))
-        graph_k = int(getattr(rcfg, "graph_candidate_k", eff_top_k * 8))
-
-        dense_hits = self.dense.search(question, dense_k)
-        for h in dense_hits:
+        dense_hits = self.dense.search(question, eff_top_k)
+        for i, h in enumerate(dense_hits, start=1):
+            h.rank = i
             h.source = "retriever"
             h.score_breakdown = {"channel": "dense", "dense_raw": float(h.score)}
 
-        bm25_pairs = self.bm25.search(question, bm25_k)
+        bm25_pairs = self.bm25.search(question, eff_top_k)
         bm25_hits: List[RetrievalHit] = []
         for i, (c, s) in enumerate(bm25_pairs, start=1):
             bm25_hits.append(
@@ -126,35 +121,43 @@ class HybridRetriever:
         colbert_hits: List[RetrievalHit] = []
         if self.colbert is not None:
             try:
-                colbert_hits = self.colbert.search(question, colbert_k)  # type: ignore
-                for h in colbert_hits:
-                    h.source = "retriever"
-                    h.score_breakdown = {"channel": "colbert", "colbert_raw": float(h.score)}
+                colbert_hits = self.colbert.search(question, eff_top_k)  
+                for i, item in enumerate(colbert_hits, start=1): 
+                    chunk, score = item
+                    colbert_hits.append(
+                        RetrievalHit(
+                            chunk=chunk,
+                            score=float(score),
+                            rank=i,
+                            source="retriever",
+                            score_breakdown={"channel": "colbert", "colbert_raw": float(score)},
+                        )
+                    )
             except Exception:
                 colbert_hits = []
 
-        # 2) Graph channel (independent)
+        # Graph channel  
         graph_hits: List[RetrievalHit] = []
         mode = getattr(decision, "mode", None)
         graph_enabled = str(mode).upper().endswith("GRAPH_AUGMENTED") or str(mode) == "RoutingMode.GRAPH_AUGMENTED"
         if graph_enabled:
-            seed_n = int(getattr(rcfg, "graph_seed_k", max(10, eff_top_k * 3)))
+            seed_n = int(getattr(rcfg, "graph_seed_k", max(10, top_k * 3)))
             seeds = dense_hits[:seed_n] + bm25_hits[:seed_n] + colbert_hits[:seed_n]
-            graph_hits = self.graph.search(question, seeds, decision=decision, top_k=graph_k)
+            graph_hits = self.graph.search(question, seeds, decision=decision, top_k=top_k)
 
-        # 3) Fusion
+        # Fusion
         fused = self._fuse(
             dense_hits=dense_hits,
             bm25_hits=bm25_hits,
             colbert_hits=colbert_hits,
             graph_hits=graph_hits,
-            pool_k=int(getattr(rcfg, "fusion_pool_k", eff_top_k * 12)),
+            pool_k=int(getattr(rcfg, "fusion_pool_k", top_k * 12)),
         )
 
         min_final = float(getattr(rcfg, "min_final_score", 0.0))
         fused = [h for h in fused if float(h.score) >= min_final]
 
-        # 4) Optional rerank
+        # Optional rerank
         if self.reranker is not None and fused:
             top_n = int(getattr(rcfg, "rerank_top_n", 50))
             beta = float(getattr(rcfg, "rerank_blend_beta", 0.35))
@@ -188,7 +191,7 @@ class HybridRetriever:
                 h.rank = i
 
         fused = _dedup_keep_best(fused)
-        return fused[:eff_top_k]
+        return fused[:top_k]
 
     def _fuse(
         self,

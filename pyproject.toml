@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "legal-rag"
 version = "0.1.0"
-description = "Graph-aware RAG system for Chinese Contract Law (Legal-RAG)"
+description = "Graph-aware RAG system for Contract Law (Legal-RAG)"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 license = { text = "MIT" }
@@ -32,13 +32,16 @@ dependencies = [
   "pandas",
 
   #  向量 / 检索 
-  "sentence-transformers>=2.2.0",
-  "faiss-cpu",
+  "sentence-transformers>=3.0.0",  
+  "faiss-cpu",             
   "rank-bm25",
   "jieba",
+  "ragatouille",
+  "pylate",
 
   #  LLM / 模型 
-  "torch",
+  "torch",                        
+  "torchvision>=0.15.0",          
   "transformers>=4.40.0",
   "tiktoken",
 
@@ -50,6 +53,7 @@ dependencies = [
 
   #  UI / HTTP 
   "gradio",
+  'pyngrok',
   "httpx",
 
   # 如果用到  openai，可以加上这一行：

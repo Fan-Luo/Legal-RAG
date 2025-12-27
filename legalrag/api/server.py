@@ -15,7 +15,7 @@ from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
-from legalrag.retrieval.builders.incremental_builder import IncrementalDenseBuilder
+from legalrag.retrieval.builders.incremental_dense_builder import IncrementalDenseBuilder
 from legalrag.ingest.service import IngestService
 
 from legalrag.utils.logger import get_logger
@@ -96,7 +96,6 @@ def root():
 
 @app.get("/health", include_in_schema=False)
 def health():
-    # Liveness: must always be fast and 200.
     return {"status": "ok"}
 
 

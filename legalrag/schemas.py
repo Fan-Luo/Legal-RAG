@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -12,43 +12,23 @@ class LawChunk(BaseModel):
     chapter: Optional[str] = None
     section: Optional[str] = None
     article_no: str
-    article_id: str # article_no 的数字编号
+    article_id: str  # article_no 的数字编号
     text: str
     source: Optional[str] = None
     start_char: Optional[int] = None
     end_char: Optional[int] = None
 
-
 class RetrievalHit(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
     chunk: LawChunk
     score: float
     rank: Optional[int] = None
-
     source: Literal["retriever", "graph", "rerank"] = "retriever"
     semantic_score: Optional[float] = None
     graph_depth: Optional[int] = None
     relations: Optional[List[str]] = None
     seed_article_id: Optional[str] = None
-    explain: Optional[Dict[str, Any]] = None
-
-    @field_validator("chunk", mode="before")
-    @classmethod
-    def _coerce_chunk(cls, v):
-        """
-        - v 是 dict：直接 validate
-        - v 是任意 pydantic BaseModel：dump -> validate
-        - v 是 LawChunk：直接返回
-        """
-        if isinstance(v, LawChunk):
-            return v
-        if isinstance(v, BaseModel):
-            return LawChunk.model_validate(v.model_dump())
-        if isinstance(v, dict):
-            return LawChunk.model_validate(v)
-        return v
-
+    score_breakdown: Optional[Dict[str, Any]] = None
 
 
 class QueryType(str, Enum):
@@ -89,12 +69,17 @@ class LawNode(BaseModel):
     title: Optional[str] = None
     chapter: Optional[str] = None
     section: Optional[str] = None
-    neighbors: List[str] = []
+    neighbors: List[Union[str, Neighbor]] = []
     meta: Dict[str, Any] = {}
 
     # Pydantic v2 uses model_config
     class Config:
         arbitrary_types_allowed = True
+
+
+class Neighbor(BaseModel):
+    article_id: str
+    relation: Optional[str] = "neighbor"
 
 
 # Pydantic v2: resolve forward refs / Literal reliably

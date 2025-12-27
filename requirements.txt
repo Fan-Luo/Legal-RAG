@@ -9,13 +9,14 @@ sentence-transformers
 rank-bm25
 jieba
 numpy
-scikit-learn
 ragatouille
+pylate
 
 # -------- Embeddings --------
-transformers>=4.39
-torch
+transformers>=4.40.0
 tiktoken
+torch
+torchvision>=0.15.0
 
 # -------- LLM acceleration --------
 accelerate
