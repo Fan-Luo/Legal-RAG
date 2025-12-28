@@ -42,8 +42,6 @@ class LLMConfig(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
     max_context_tokens: int = 4096
-
-    max_context_tokens: int = 4096
     max_new_tokens: int = 512
     temperature: float = 0.5
     top_p: float = 0.9
@@ -61,6 +59,10 @@ class RetrievalConfig(BaseModel):
     faiss_meta_file: str = "index/faiss_meta.jsonl"
     embedding_model: str = "BAAI/bge-base-zh-v1.5"
 
+    hnsw_m: int = 32
+    hnsw_ef_construction: int = 200
+    hnsw_ef_search: int = 128  # 可在运行时动态调整
+
     # -------- BM25 (Sparse) --------
     bm25_index_file: str = "index/bm25.pkl"
 
@@ -68,17 +70,16 @@ class RetrievalConfig(BaseModel):
     top_k: int = 10
     bm25_weight: float = 0.4
     dense_weight: float = 0.6
-    min_final_score: float = 1.0
+    min_final_score: float = 0.2
 
     # -------- ColBERT (Late Interaction) --------
-    enable_colbert: bool = False
+    enable_colbert: bool = True
     colbert_index_path: str = "index/colbert"
     colbert_meta_file: str = "index/colbert_meta.jsonl"
-    colbert_model_name: str = "colbert-ir/colbertv2.0"
-    colbert_candidate_k: int = top_k
     colbert_weight: float = 0.35
-
-    # ColBERT build-time params
+    colbert_backend: str = "pylate"          # or "auto"
+    colbert_index_name: str = "index"
+    colbert_model_name: str = "lightonai/GTE-ModernColBERT-v1" # "colbert-ir/colbertv2.0"
     colbert_max_document_length: int = 300
     colbert_split_documents: bool = False
     colbert_overwrite: bool = True
@@ -87,7 +88,7 @@ class RetrievalConfig(BaseModel):
     enable_hyde: bool = False
 
     # -------- Rerank --------
-    enable_rerank: bool = False
+    enable_rerank: bool = True
     rerank_top_n: int = 100
     rerank_blend_beta: float = 0.35
     rerank_model: str = "BAAI/bge-reranker-base"

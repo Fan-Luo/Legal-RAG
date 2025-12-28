@@ -123,41 +123,36 @@ def _safe_clip(x: float, lo: float, hi: float) -> float:
 class CrossEncoderReranker:
     """
     Cross-encoder reranker using sentence-transformers CrossEncoder.
-      - Produces "raw scores" in model scale,
-      - Caller can normalize via `rerank_candidates()` using min-max/sigmoid, etc.
     """
-
     model_name: str = "BAAI/bge-reranker-base"
     device: Optional[str] = None
-    max_length: int = 512
+    max_length: int = 512           
     batch_size: int = 32
 
     def __post_init__(self) -> None:
         try:
-            from sentence_transformers import CrossEncoder  # type: ignore
+            from sentence_transformers import CrossEncoder
         except Exception as e:
             raise RuntimeError(
                 "CrossEncoderReranker requires `sentence-transformers`. "
-                "Install with: pip install sentence-transformers"
+                "Install with: pip install -U sentence-transformers"
             ) from e
 
-        kwargs: Dict[str, Any] = {}
-        if self.device:
-            kwargs["device"] = self.device
-        self._model = CrossEncoder(self.model_name, **kwargs)
+        self._model = CrossEncoder(
+            self.model_name,
+            max_length=self.max_length,    
+            device=self.device or ("cuda" if torch.cuda.is_available() else "cpu"),
+        )
 
     def score(self, query: str, doc: str) -> float:
-        return float(
-            self._model.predict([(query, doc)], batch_size=1, max_length=self.max_length)[0]
-        )
+        return float(self._model.predict([(query, doc)])[0])
 
     def score_batch(self, query: str, docs: List[str]) -> List[float]:
         pairs = [(query, d) for d in docs]
         scores = self._model.predict(
             pairs,
             batch_size=int(self.batch_size),
-            max_length=self.max_length,
-            show_progress_bar=False,
+            show_progress_bar=False
         )
         return [float(s) for s in scores]
 
