@@ -28,12 +28,11 @@ def _mean_pool(last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) ->
     counts = mask.sum(dim=1).clamp(min=1e-9)                        # [b, 1]
     return summed / counts
 
-
 class VectorStore:
     """
     Dense 向量检索后端：
     - 使用 BAAI/bge-base-zh-v1.5（或 cfg.retrieval.embedding_model）作为 encoder
-    - 使用 FAISS IndexFlatIP 做内积检索（向量已 L2 归一化 → 相当于 cosine）
+    - 使用 FAISS IndexHNSWFlat 做高效近似内积检索（向量已 L2 归一化 → 相当于 cosine）
     """
 
     def __init__(self, cfg: AppConfig):
@@ -51,14 +50,12 @@ class VectorStore:
         self.model = AutoModel.from_pretrained(model_name)
         self.model.to(self.device)
         self.model.eval()
-
-        self.index: faiss.IndexFlatIP | None = None
+        self.index: faiss.Index | None = None  
         self.chunks: List[LawChunk] = []
-
 
     def load(self):
         """
-        加载 FAISS 索引 + 元数据 JSONL → LawChunk 列表。
+        加载 FAISS HNSW 索引 + 元数据 JSONL → LawChunk 列表。
         """
         if self.index is not None and self.chunks:
             return
@@ -67,14 +64,21 @@ class VectorStore:
             raise FileNotFoundError("FAISS 索引或元数据不存在，请先运行 scripts.build_index.")
 
         self.index = faiss.read_index(str(self.index_path))
+
+        # 设置搜索时的 efSearch 参数（提高召回率）
+        if hasattr(self.index, 'hnsw'):
+            ef_search = getattr(self.cfg.retrieval, "hnsw_ef_search", 128)
+            self.index.hnsw.efSearch = ef_search
+            logger.info(f"[FAISS] Set hnsw.efSearch = {ef_search}")
+
         self.chunks = []
         with self.meta_path.open("r", encoding="utf-8") as f:
             for line in f:
-                obj = json.loads(line)
-                self.chunks.append(LawChunk(**obj))
+                if line.strip():  
+                    obj = json.loads(line)
+                    self.chunks.append(LawChunk.model_validate(obj))  
 
-        logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks")
-
+        logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks, index type: {type(self.index)}")
 
     def _embed(self, texts: List[str]) -> np.ndarray:
         """
@@ -109,6 +113,9 @@ class VectorStore:
         """
         self.load()
         q_vec = self._embed([query])  # [1, dim]
+        # if hasattr(self.index, 'hnsw'):
+            # self.index.hnsw.efSearch = 256  # 临时提高召回
+
         scores, idxs = self.index.search(q_vec, top_k)
 
         hits: List[Tuple[LawChunk, float]] = []
@@ -116,7 +123,9 @@ class VectorStore:
             if idx == -1:
                 continue
             hits.append((self.chunks[idx], float(score)))
+
+        # 恢复默认 efSearch
+        # if hasattr(self.index, 'hnsw'):
+        #     self.index.hnsw.efSearch = default_ef_search
         return hits
-
-
         

@@ -39,8 +39,7 @@ class DenseRetriever:
         k = max(1, int(top_k))
         qvec = self.store._embed([query]).astype("float32")  # shape (1, dim)
 
-        # VectorStore uses IndexFlatIP; assume vectors are normalized => IP ~= cosine
-        scores, idxs = self.store.index.search(qvec, k)  # type: ignore[attr-defined]
+        scores, idxs = self.store.index.search(qvec, k)   
         scores = scores[0].tolist()
         idxs = idxs[0].tolist()
 
