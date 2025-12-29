@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
+import math
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -15,35 +17,54 @@ logger = get_logger(__name__)
 
 
 def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
-    if a.ndim != 1:
-        a = a.reshape(-1)
-    if b.ndim != 1:
-        b = b.reshape(-1)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-12
+    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9
     return float(np.dot(a, b) / denom)
 
 
-def _extract_key_term(question: str) -> str:
-    import re
-    toks = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z]{3,}", question or "")
-    if not toks:
-        return (question or "").strip()[:12]
-    return max(toks, key=len)
+def _depth_decay(depth: int, gamma: float = 0.7) -> float:
+    d = max(1, int(depth or 1))
+    return float(1.0 / ((1.0 + d) ** gamma))
+
+
+def _relation_weight(relations: List[str]) -> float:
+    rels = [str(r).lower() for r in (relations or [])]
+    if not rels:
+        return 1.0
+    wmap = {
+        "defined_by": 1.20,
+        "defines_term": 1.10, 
+        "cite": 1.15,
+        "cited": 1.15,
+        "ref": 1.15,
+        "amend": 1.10,
+        "next": 0.95,
+        "prev": 0.95,
+        "neighbor": 1.00,
+    }
+    return float(max(wmap.get(r, 1.0) for r in rels))
+
+
+def _make_hit(payload: Dict[str, Any]) -> RetrievalHit:
+
+    if hasattr(RetrievalHit, "model_validate"):
+        return RetrievalHit.model_validate(payload)  # type: ignore[attr-defined]
+    return RetrievalHit(**payload)
 
 
 @dataclass
 class GraphRetriever:
     """
-    Graph-aware retriever
-    - Seeds from other channels provide starting nodes.
-    - Walk graph to collect candidate nodes.
-    - Score candidates by semantic similarity (VectorStore embedder).
-    - Return graph_hits  
+    Graph-aware retriever:
+      - start_ids from seeds (other channels)
+      - walk graph to collect candidate nodes
+      - hydrate LawChunk via VectorStore.id2chunk
+      - score by semantic similarity, adjusted by graph_depth / relations / edge conf
     """
 
     cfg: AppConfig
     graph: Optional[LawGraphStore] = None
     store: Optional[VectorStore] = None
+    id2chunk: Optional[Dict[str, LawChunk]] = None
 
     def __post_init__(self) -> None:
         if self.graph is None:
@@ -51,138 +72,143 @@ class GraphRetriever:
         if self.store is None:
             self.store = VectorStore(self.cfg)
 
+        # Load vector store & build id2chunk
+        self.store.load()
+        self.id2chunk = {}
+        for c in getattr(self.store, "chunks", []) or []:
+            aid = getattr(c, "article_id", None) or getattr(c, "id", None)
+            if aid:
+                self.id2chunk[str(aid)] = c
+
     def search(
         self,
         question: str,
-        seed_hits: List[RetrievalHit],
+        seeds: List[Any],
         *,
         decision: Any = None,
-        top_k: int = 50,
-        depth: Optional[int] = None,
-        limit: Optional[int] = None,
+        top_k: int = 10,
     ) -> List[RetrievalHit]:
-        if not seed_hits:
-            return []
-
+        """
+        seeds: list[RetrievalHit] from other channels (dense/bm25/colbert)
+        Returns: list[RetrievalHit] with source="graph"
+        """
         assert self.graph is not None
         assert self.store is not None
+        assert self.id2chunk is not None
 
         rcfg = getattr(self.cfg, "retrieval", None)
-        if depth is None:
-            depth = int(getattr(rcfg, "graph_depth", 2)) if rcfg else 2
-        if limit is None:
-            limit = int(getattr(rcfg, "graph_limit", 120)) if rcfg else 120
+        eff_top_k = max(1, int(top_k))
 
-        # Seeds -> start_ids
+        # walk params
+        relation_depths = rcfg.graph_walk_depths if hasattr(rcfg, "graph_walk_depths") else {"default": 2}
+        limit = int(getattr(rcfg, "graph_limit", eff_top_k * 8) if rcfg else eff_top_k * 8)
+        rel_types = getattr(rcfg, "graph_rel_types", None) if rcfg else None
+        min_conf = float(getattr(rcfg, "graph_min_conf", 0.0) if rcfg else 0.0)
+        gamma = float(getattr(rcfg, "graph_depth_gamma", 0.7) if rcfg else 0.7)
+
+        # seed ids
         seed_ids: List[str] = []
-        for h in seed_hits:
-            sid = getattr(h.chunk, "article_id", None) or getattr(h.chunk, "id", None)
-            if sid:
-                seed_ids.append(str(sid))
-        seed_ids = list(dict.fromkeys(seed_ids))
+        for h in seeds or []:
+            c = getattr(h, "chunk", None)
+            if c is None:
+                continue
+            aid = getattr(c, "article_id", None) or getattr(c, "id", None)
+            if aid:
+                seed_ids.append(str(aid))
+        seed_ids = [x for x in seed_ids if x]
         if not seed_ids:
             return []
 
-        # Walk graph
-        try:
-            nodes = self.graph.walk(
-                start_ids=seed_ids,
-                depth=int(depth),
-                rel_types=getattr(rcfg, "graph_rel_types", None) if rcfg else None,
-                limit=int(limit),
-            )
-        except Exception:
-            logger.warning("[graph] walk failed", exc_info=True)
-            nodes = []
-
-        # Definition-specific expansion
-        qtype = getattr(decision, "query_type", None)
-        if str(qtype).upper().endswith("DEFINITION"):
-            term = _extract_key_term(question)
-            try:
-                nodes.extend(self.graph.get_definition_sources(term))
-            except Exception:
-                logger.warning("[graph] get_definition_sources failed", exc_info=True)
-
-        # Dedup + filter out seed ids
-        seen = set(seed_ids)
-        uniq_nodes: List[Any] = []
-        for n in nodes:
-            aid = getattr(n, "article_id", None) or getattr(n, "id", None)
-            if not aid:
-                continue
-            aid = str(aid)
-            if aid in seen:
-                continue
-            seen.add(aid)
-            uniq_nodes.append(n)
-
-        if not uniq_nodes:
+        # Walk graph 
+        nodes = self.graph.walk(
+            start_ids=seed_ids,
+            relation_max_depth=relation_depths,
+            limit=limit,
+            rel_types=rel_types,
+            min_conf=min_conf,
+        )
+        if not nodes:
             return []
 
-        # Nodes -> chunks
-        graph_chunks: List[LawChunk] = []
-        meta: List[dict] = []
-        for n in uniq_nodes:
-            try:
-                article_id = str(getattr(n, "article_id", None) or getattr(n, "id", ""))
-                title = getattr(n, "title", None) or getattr(n, "article_title", None) or ""
-                chapter = getattr(n, "chapter", None) or getattr(n, "section", None) or ""
-                content = getattr(n, "text", None) or getattr(n, "content", None) or ""
-                text = f"{title}\n{content}".strip() if title else str(content).strip()
-                if not article_id or not text:
-                    continue
-                graph_chunks.append(
-                    LawChunk(
-                        id=article_id,
-                        article_id=article_id,
-                        title=str(title) if title else None,
-                        chapter=str(chapter) if chapter else None,
-                        text=text,
-                        source="graph",
-                    )
-                )
-                meta.append(
-                    {
-                        "graph_depth": int(getattr(n, "graph_depth", 1) or 1),
-                        "relations": list(getattr(n, "relations", []) or []),
-                    }
-                )
-            except Exception:
+        # De-dup by article_id
+        uniq = {}
+        for n in nodes:
+            aid = str(getattr(n, "article_id", "") or "").strip()
+            if not aid:
                 continue
+            if aid not in uniq:
+                uniq[aid] = n
+        uniq_nodes = list(uniq.values())
+
+        # Hydrate chunks + keep meta
+        graph_chunks: List[LawChunk] = []
+        meta: List[Dict[str, Any]] = []
+
+        for n in uniq_nodes:
+            aid = str(getattr(n, "article_id", "") or "").strip()
+            if not aid:
+                continue
+            c = self.id2chunk.get(aid)
+            if not c or not (getattr(c, "text", "") or "").strip():
+                continue
+
+            cc = copy.copy(c)
+            setattr(cc, "source", "graph")
+            graph_chunks.append(cc)
+
+            edge_conf = float(((getattr(n, "meta", {}) or {}).get("_edge_conf", 1.0)) or 1.0)
+            rels = list(getattr(n, "relations", []) or [])
+            meta.append(
+                {
+                    "graph_depth": int(getattr(n, "graph_depth", 1) or 1),
+                    "relations": rels,
+                    "edge_conf": edge_conf,
+                }
+            )
 
         if not graph_chunks:
             return []
 
-        # Semantic scoring
-        self.store.load()
-        qvec = self.store._embed([question]).astype("float32")[0]
-        doc_vecs = self.store._embed([c.text for c in graph_chunks]).astype("float32")
+        # Embeddings
+        qvec = self.store._embed(question)  # type: ignore[attr-defined]
+        doc_vecs = self.store._embed([c.text for c in graph_chunks])  # type: ignore[attr-defined]
 
         hits: List[RetrievalHit] = []
         for i, (c, v, m) in enumerate(zip(graph_chunks, doc_vecs, meta), start=1):
             sem = _cosine_sim(qvec, v)
-            hits.append(
-                RetrievalHit(
-                    chunk=c,
-                    score=float(sem),
-                    rank=i,
-                    source="graph",
-                    semantic_score=float(sem),
-                    graph_depth=int(m["graph_depth"]),
-                    relations=m["relations"],
-                    seed_article_id=seed_ids[0] if seed_ids else None,
-                    score_breakdown={
-                        "channel": "graph",
-                        "semantic": float(sem),
-                        "graph_depth": int(m["graph_depth"]),
-                        "relations": m["relations"],
-                    },
-                )
-            )
+            gd = int(m["graph_depth"])
+            rels = m["relations"]
+            conf = float(m.get("edge_conf", 1.0) or 1.0)
 
-        hits.sort(key=lambda x: float(x.score), reverse=True)
-        hits = hits[: max(1, int(top_k))]
+            dd = _depth_decay(gd, gamma=gamma)
+            rw = _relation_weight(rels)
+
+            final = float(sem) * float(dd) * float(rw) * float(conf)
+
+            payload = {
+                "chunk": c,
+                "score": float(final),
+                "rank": i,
+                "source": "graph",
+                "score_breakdown": {
+                    "channel": "graph",
+                    "semantic": float(sem),
+                    "depth_decay": float(dd),
+                    "relation_weight": float(rw),
+                    "edge_conf": float(conf),
+                    "final": float(final),
+                    "graph_depth": gd,
+                    "relations": rels,
+                },
+            }
+            hits.append(_make_hit(payload))
+
+        # sort by score desc and re-rank
+        hits.sort(key=lambda h: float(getattr(h, "score", 0.0) or 0.0), reverse=True)
         for r, h in enumerate(hits, start=1):
-            h.rank = r
-        return hits
+            try:
+                setattr(h, "rank", r)
+            except Exception:
+                pass
+
+        return hits[:eff_top_k]

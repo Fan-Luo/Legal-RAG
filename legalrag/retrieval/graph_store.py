@@ -1,209 +1,194 @@
 from __future__ import annotations
 
+import copy
 import json
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
-
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from legalrag.schemas import LawNode, Neighbor
 from legalrag.config import AppConfig
-from legalrag.schemas import LawNode
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
+
 class LawGraphStore:
+    """
+    Loads a law graph JSONL and supports BFS-style walk.
+    """
+
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
-        self.graph_path = Path(cfg.paths.law_graph_jsonl)
-
-        # nodes: article_id -> LawNode
+        self.graph_path = Path(getattr(cfg.paths, "law_graph_jsonl"))
         self.nodes: Dict[str, LawNode] = {}
-
-        # adj: article_id -> List[(neighbor_id, relation_type)]
-        self.adj: Dict[str, List[Tuple[str, str]]] = {}
-
+        self.adj: Dict[str, List[Tuple[str, str, float, Optional[Dict[str, Any]]]]] = defaultdict(list)
         self._loaded = False
 
-    def load(self):
-        """
-        Load graph nodes and build adjacency.
-        Safe to call multiple times.
-        """
+    def load(self) -> None:
         if self._loaded:
             return
-
         if not self.graph_path.exists():
-            logger.warning(f"[Graph] {self.graph_path} 不存在，跳过 law_graph。")
-            self._loaded = True
-            return
+            raise FileNotFoundError(f"Graph JSONL not found: {self.graph_path}")
 
+        nodes: Dict[str, LawNode] = {}
         with self.graph_path.open("r", encoding="utf-8") as f:
             for line in f:
+                line = line.strip()
+                if not line:
+                    continue
                 obj = json.loads(line)
-                node = LawNode(**obj)
-                self.nodes[node.article_id] = node
+                aid = str(obj.get("article_id") or obj.get("id") or "").strip()
+                if not aid:
+                    continue
+                neighbors_raw = obj.get("neighbors") or []
+                neighbors: List[Neighbor] = []
+                for nb in neighbors_raw:
+                    if isinstance(nb, str):
+                        neighbors.append(Neighbor(article_id=str(nb), relation="neighbor", conf=1.0))
+                    elif isinstance(nb, dict):
+                        dst = str(nb.get("article_id") or nb.get("id") or "").strip()
+                        if not dst:
+                            continue
+                        neighbors.append(
+                            Neighbor(
+                                article_id=dst,
+                                relation=str(nb.get("relation") or "neighbor"),
+                                conf=float(nb.get("conf", 1.0) or 1.0),
+                                evidence=nb.get("evidence"),
+                            )
+                        )
+                node = LawNode(
+                    article_id=aid,
+                    article_no=str(obj.get("article_no") or ""),
+                    law_name=obj.get("law_name"),
+                    title=obj.get("title"),
+                    chapter=obj.get("chapter"),
+                    section=obj.get("section"),
+                    neighbors=neighbors,
+                    meta=obj.get("meta") or {},
+                )
+                nodes[aid] = node
 
-        logger.info(f"[Graph] Loaded {len(self.nodes)} law nodes")
+        self.nodes = nodes
 
-        self._build_adj()
+        # Build adjacency  
+        adj: Dict[str, List[Tuple[str, str, float, Optional[Dict[str, Any]]]]] = defaultdict(list)
+        edge_cnt = 0
+        for src, node in self.nodes.items():
+            for e in node.neighbors:
+                adj[src].append((e.article_id, e.relation, float(e.conf or 1.0), e.evidence))
+                edge_cnt += 1
+        self.adj = adj
+
         self._loaded = True
-
-    def _build_adj(self):
-        """
-        Build adjacency list from node.neighbors.
-        node.neighbors 被认为是 article_id 列表。
-        """
-        adj: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
-
-        for node in self.nodes.values():
-            src_id = node.article_id
-            neighbors = getattr(node, "neighbors", []) or []
-
-            for nb_id in neighbors:
-                if nb_id not in self.nodes:
-                    continue
-
-                nb_node = self.nodes[nb_id]
-                rtype = self.classify_relation(node, nb_node)
-
-                adj[src_id].append((nb_id, rtype))
-                # 默认认为是双向关系
-                adj[nb_id].append((src_id, rtype))
-
-        self.adj = dict(adj)
-
-        logger.info(
-            f"[Graph] Built adjacency: {sum(len(v) for v in self.adj.values())} edges"
-        )
-
-    def get_neighbors(self, article_id: str, depth: int = 1) -> List[LawNode]:
-        self.load()
-
-        if article_id not in self.nodes:
-            return []
-
-        result: List[LawNode] = []
-        visited = set()
-        frontier = [article_id]
-
-        for _ in range(depth):
-            next_frontier = []
-            for aid in frontier:
-                if aid in visited:
-                    continue
-                visited.add(aid)
-
-                node = self.nodes.get(aid)
-                if not node:
-                    continue
-
-                result.append(node)
-                next_frontier.extend(getattr(node, "neighbors", []) or [])
-
-            frontier = next_frontier
-
-        return result
-
-    def get_node(self, article_id: str) -> Optional[LawNode]:
-        self.load()
-        return self.nodes.get(article_id)
-
-    def classify_relation(self, seed: LawNode, other: LawNode) -> str:
-        """
-        粗略关系分类：
-        - 同 chapter & 同 section & 相邻条号 → sibling
-        - 同 chapter & 同 section            → same_section
-        - 同 chapter 不同 section            → same_chapter
-        - 其它                               → neighbor
-        """
-        try:
-            seed_no = int(seed.article_no)
-            other_no = int(other.article_no)
-        except Exception:
-            seed_no = other_no = None
-
-        if seed.chapter == other.chapter:
-            if seed.section == other.section:
-                if seed_no is not None and other_no is not None:
-                    if abs(seed_no - other_no) == 1:
-                        return "sibling"
-                return "same_section"
-            return "same_chapter"
-
-        return "neighbor"
+        logger.info("[Graph] Loaded %d law nodes", len(self.nodes))
+        logger.info("[Graph] Built adjacency: %d edges", edge_cnt)
 
     def walk(
         self,
+        *,
         start_ids: List[str],
-        depth: int = 2,
-        rel_types: Optional[List[str]] = None,
+        relation_max_depth: Optional[Dict[str, int]] = None,
         limit: int = 80,
+        rel_types: Optional[List[str]] = None,
+        min_conf: float = 0.0,
     ) -> List[LawNode]:
         """
-        BFS over graph adjacency.
-        Gracefully degrades if graph is empty.
+        BFS from start_ids up to `depth` hops, returning at most `limit` unique nodes.
+        - rel_types: if provided and non-empty, only traverse these relation names
+        - min_conf: discard edges with conf < min_conf
+        Returned nodes are *cloned* with query-time fields populated, avoiding global state pollution.
         """
         self.load()
 
-        if not start_ids or not self.adj:
+        start_ids = [str(x).strip() for x in (start_ids or []) if str(x).strip()]
+        if not start_ids:
             return []
 
-        rel_types = rel_types or []
+        default_max_d = relation_max_depth.get("default", 2)
+        limit = max(1, int(limit))
+        rel_allow = set([str(r) for r in rel_types]) if rel_types else None
+        min_conf = float(min_conf or 0.0)
 
         visited: set[str] = set(start_ids)
-        results: List[LawNode] = []
-        frontier: List[Tuple[str, int]] = [(sid, 0) for sid in start_ids]
+        # queue items: (node_id, dist, parent_id, relation_used)
+        q: deque[Tuple[str, int, Optional[str], Optional[str]]] = deque()
+        for sid in start_ids:
+            q.append((sid, 0, None, None))
 
-        while frontier and len(results) < limit:
-            current_id, d = frontier.pop(0)
-            if d >= depth:
+        results: List[LawNode] = []
+        while q and len(results) < limit:
+            cur, dist, parent, rel = q.popleft()
+
+            if rel:
+                max_allowed = relation_max_depth.get(rel, default_max_d)
+            else:
+                max_allowed = default_max_d
+                
+     
+            if dist >= max_allowed:
                 continue
 
-            for nb_id, rtype in self.adj.get(current_id, []):
+            for nb_id, rtype, conf, evidence in self.adj.get(cur, []):
+                if min_conf > 0 and conf < min_conf:
+                    continue
+                if rel_allow is not None and rtype not in rel_allow:
+                    continue
                 if nb_id in visited:
                     continue
-                if rel_types and rtype not in rel_types:
-                    continue
-
                 visited.add(nb_id)
-                node = self.nodes.get(nb_id)
-                if not node:
+
+                n0 = self.nodes.get(nb_id)
+                if not n0:
                     continue
 
-                node.graph_depth = d + 1
-                node.relations = [rtype]
+                n = copy.copy(n0)
+                # query-time fields
+                n.graph_depth = dist + 1
+                n.graph_parent = cur
+                n.relations = rtype
+                n.relations = [rtype]
+                # attach evidence for debugging (non-schema; safe in meta)
+                if evidence:
+                    n.meta = dict(n.meta or {})
+                    n.meta["_edge_evidence"] = evidence
+                    n.meta["_edge_conf"] = conf
 
-                results.append(node)
-                frontier.append((nb_id, d + 1))
-
+                results.append(n)
                 if len(results) >= limit:
                     break
+                q.append((nb_id, dist + 1, cur, rtype))
 
         return results
 
-    def get_definition_sources(self, term: str) -> List[LawNode]:
-        """
-        定义条款扩展
-        """
+    def get_neighbors(self, article_id: str, depth: int = 1) -> List[LawNode]:
         self.load()
-
-        if not term:
+        aid0 = str(article_id).strip()
+        if aid0 not in self.nodes:
             return []
 
-        term = term.strip()
-        res: List[LawNode] = []
+        depth = max(1, int(depth))
+        visited = {aid0}
+        frontier = [aid0]
+        out: List[LawNode] = []
 
-        for node in self.nodes.values():
-            text = getattr(node, "text", "") or ""
-            if not text:
-                continue
+        for _ in range(depth):
+            next_frontier: List[str] = []
+            for aid in frontier:
+                for nb_id, rtype, conf, evidence in self.adj.get(aid, []):
+                    if nb_id in visited:
+                        continue
+                    visited.add(nb_id)
+                    n0 = self.nodes.get(nb_id)
+                    if not n0:
+                        continue
+                    out.append(n0)
+                    next_frontier.append(nb_id)
+            frontier = next_frontier
 
-            if term in text and any(
-                p in text for p in ["是指", "本法所称", "本条所称", "本编所称"]
-            ):
-                node.graph_depth = getattr(node, "graph_depth", 1)
-                node.relations = ["definition"]
-                res.append(node)
+        return out
 
-        return res
+    def get_node(self, article_id: str) -> Optional[LawNode]:
+        return self.nodes.get(article_id)
