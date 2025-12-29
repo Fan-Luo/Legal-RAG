@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
-
-from pydantic import BaseModel
-
+from pathlib import Path 
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -66,6 +64,13 @@ class RetrievalConfig(BaseModel):
     # -------- BM25 (Sparse) --------
     bm25_index_file: str = "index/bm25.pkl"
 
+    # ------------ Graph ------------
+    enable_graph: bool = True
+    graph_seed_k: int = 30                # 选多少 seed 去扩展 
+    graph_depth: int = 2                   
+    graph_limit: int = 80                 
+    graph_rel_types: Optional[List[str]] = None
+
     # -------- Retrieval control --------
     top_k: int = 10
     bm25_weight: float = 0.4
@@ -79,7 +84,7 @@ class RetrievalConfig(BaseModel):
     colbert_weight: float = 0.35
     colbert_backend: str = "pylate"          # or "auto"
     colbert_index_name: str = "index"
-    colbert_model_name: str = "lightonai/GTE-ModernColBERT-v1" # "colbert-ir/colbertv2.0"
+    colbert_model_name: str =  "colbert-ir/colbertv2.0" # "lightonai/GTE-ModernColBERT-v1"  
     colbert_max_document_length: int = 300
     colbert_split_documents: bool = False
     colbert_overwrite: bool = True
@@ -118,7 +123,7 @@ class RoutingConfig(BaseModel):
 class AppConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
     llm: LLMConfig = LLMConfig()
-    retrieval: RetrievalConfig = RetrievalConfig()
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     pdf: PDFConfig = PDFConfig()
     server: ServerConfig = ServerConfig()
     routing: RoutingConfig = RoutingConfig()
@@ -146,6 +151,8 @@ class AppConfig(BaseModel):
         r.faiss_index_file = abs_path(r.faiss_index_file)
         r.faiss_meta_file = abs_path(r.faiss_meta_file)
         r.bm25_index_file = abs_path(r.bm25_index_file)
+        r.colbert_index_path = abs_path(r.colbert_index_path)
+        r.colbert_meta_file = abs_path(r.colbert_meta_file )
 
         Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.processed_dir).mkdir(parents=True, exist_ok=True)

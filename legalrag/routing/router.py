@@ -192,19 +192,19 @@ class QueryRouter:
         prompt = f"""
 你是合同法法律问题分类器，请把问题分类为以下类别之一，并只返回英文类别名（不要解释）：
 
-  1) DEFINITION（概念/定义）：询问“是什么/含义/性质/法律概念”。
+  1) DEFINITION：询问“是什么/含义/性质/法律概念”。
 
-  2) VALIDITY（成立/生效/无效/可撤销）：是否有效、是否可撤销、是否无效、成立与生效区分等。
+  2) VALIDITY：是否有效、是否可撤销、是否无效、成立与生效区分等。
 
-  3) PERFORMANCE（履行/抗辩/风险承担/价款）：是否应继续履行、是否可拒绝付款、风险承担、履行顺序等。
+  3) PERFORMANCE：是否应继续履行、是否可拒绝付款、风险承担、履行顺序等。
 
-  4) BREACH_REMEDY（违约责任/违约金/赔偿/定金等救济）：违约金是否过高、能否调整、赔偿范围、定金罚则、救济竞合。
+  4) BREACH_REMEDY：违约金是否过高、能否调整、赔偿范围、定金罚则、救济竞合。
 
-  5) TERMINATION（解除/终止/解除后果）：能否解除、解除条件、解除后果。
+  5) TERMINATION：能否解除、解除条件、解除后果。
 
-  6) PROCEDURE（诉讼时效/举证/程序性）：是否超过诉讼时效、起算点、期间、时效中断/中止、程序要件。
+  6) PROCEDURE：是否超过诉讼时效、起算点、期间、时效中断/中止、程序要件。
 
-  7) OTHER（混合/不确定/超出候选条文覆盖范围）
+  7) OTHER:
    - 问题包含多重法律争点（例如：欺诈 + 可撤销 + 时效 + 举证），但候选条文不足以覆盖全部争点；
    - 或问题明显需要合同编之外的规则（例如：一般诉讼时效条款在总则/侵权编、证据规则、公司法税务等）；
    - 或 router 无法可靠归为以上分类
@@ -225,7 +225,7 @@ class QueryRouter:
             "OTHER": (QueryType.OTHER, RoutingMode.RAG, 1),
         }
         qtype, mode, weight = mapping.get(label, (QueryType.PERFORMANCE, RoutingMode.RAG, 1.0))
-        return Rule(name="llm_fallback", keywords=[], qtype=qtype, weight=weight, mode=mode, priority=0)
+        return Rule(name="llm", keywords=[], qtype=qtype, weight=weight, mode=mode, priority=0)
 
     def route(self, question: str) -> RoutingDecision:
         q = normalize_whitespace(question)

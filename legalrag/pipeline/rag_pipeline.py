@@ -233,10 +233,8 @@ class RagPipeline:
         eff_top_k = int(base_k * getattr(decision, "top_k_factor", 1.0))
         eff_top_k = max(3, min(eff_top_k, 30))
 
-        hits = self.retriever.search(question, top_k=eff_top_k)
-        for h in hits:
-            h.source = getattr(h, 'source', 'retriever') 
-
+        hits = self.retriever.search(question, top_k=eff_top_k, decision=decision)
+       
         return decision, hits, eff_top_k
 
     def answer_from_hits(
@@ -297,7 +295,7 @@ class RagPipeline:
         stream_obj = stream_fn(messages)
         logger.info("[TIMING] chat_stream_call=%.3fs", time.time() - t_call0)
 
-        # Branch 1: async iterator/generator (OpenAI in your current implementation)
+        # Branch 1: async iterator/generator 
         if hasattr(stream_obj, "__aiter__"):
             first = True
             async for piece in stream_obj:

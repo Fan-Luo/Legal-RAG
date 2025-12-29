@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
-
-from pydantic import BaseModel, ConfigDict, field_validator
+from dataclasses import field
+from pydantic import BaseModel, ConfigDict, field_validator 
 
 
 class LawChunk(BaseModel):
@@ -30,7 +30,6 @@ class RetrievalHit(BaseModel):
     seed_article_id: Optional[str] = None
     score_breakdown: Optional[Dict[str, Any]] = None
 
-
 class QueryType(str, Enum):
     """
     High-level legal question categories for contract law RAG.
@@ -44,18 +43,15 @@ class QueryType(str, Enum):
     PROCEDURE = "procedure"    # 诉讼时效、期间起算、中断中止、举证责任、程序性问题
     OTHER = "other"   
 
-
 class RoutingMode(str, Enum):
     DIRECT_LLM = "direct_llm"
     RAG = "rag"
     GRAPH_AUGMENTED = "graph_augmented"
 
-
 class RoutingDecision(BaseModel):
     query_type: QueryType
     mode: RoutingMode
     top_k_factor: float = 1.0
-
 
 class RagAnswer(BaseModel):
     question: str
@@ -63,24 +59,28 @@ class RagAnswer(BaseModel):
     hits: List[RetrievalHit]
 
 
-class LawNode(BaseModel):
+class Neighbor(BaseModel):
+    """A directed edge from one article node to another."""
     article_id: str
-    article_no: str
+    relation: str = "neighbor"
+    conf: float = 1.0
+    evidence: Optional[Dict[str, Any]] = None
+
+class LawNode(BaseModel):
+    """Lightweight in-memory node. (Do NOT store query-time fields in JSONL.)"""
+    article_id: str
+    article_no: str = ""
+    law_name: Optional[str] = None
     title: Optional[str] = None
     chapter: Optional[str] = None
     section: Optional[str] = None
-    neighbors: List[Union[str, Neighbor]] = []
-    meta: Dict[str, Any] = {}
+    neighbors: List[Neighbor] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
 
-    # Pydantic v2 uses model_config
-    class Config:
-        arbitrary_types_allowed = True
-
-
-class Neighbor(BaseModel):
-    article_id: str
-    relation: Optional[str] = "neighbor"
-
+    # ---- query-time fields ----
+    graph_depth: Optional[int] = None
+    graph_parent: Optional[str] = None
+    relations: Optional[str] = None
 
 # Pydantic v2: resolve forward refs / Literal reliably
 try:
