@@ -128,4 +128,3 @@ class VectorStore:
         # if hasattr(self.index, 'hnsw'):
         #     self.index.hnsw.efSearch = default_ef_search
         return hits
-

@@ -1,46 +1,50 @@
-# -------- Core framework --------
+# ---- Web / API  ----
 fastapi
+pydantic>=2.0.0
 uvicorn[standard]
-pydantic>=2.0
+jedi>=0.16
 
-# -------- Retrieval & NLP --------
+# ---- Retrieval core ----
 faiss-cpu
-sentence-transformers
 rank-bm25
 jieba
-numpy
-ragatouille
-pylate
 
-# -------- Embeddings --------
-transformers>=4.40.0
-tiktoken
-torch
-torchvision>=0.15.0
-
-# -------- LLM acceleration --------
+# ---- Transformers stack ----
+transformers==4.52.3
 accelerate
+sentence-transformers==5.1.1
 
-# -------- PDF & OCR --------
+# ---- ColBERT ----
+pylate==1.3.4
+voyager
+ragatouille
+
+# ---- Torch ----
+torch>=2.8.0
+
+# ---- PDF ----
 pdfplumber
 pdf2image
 pytesseract
 Pillow
 python-multipart
+pypdf
 
-# -------- UI --------
-pyngrok
-streamlit
+# ---- HTTP / utils ----
 httpx
 requests
-
-# -------- OpenAI --------
-openai
-
-# -------- Utils --------
-loguru
 pyyaml
 tqdm
+loguru
+filelock
+python-multipart
 
-# -------- Dev / Test --------
-pytest
+# ---- LLM ----
+openai>=1.0.0
+tiktoken
+
+# -- Numeric / Data --
+numpy
+pandas==2.2.2
+scikit-learn>=1.4
+matplotlib>=3.8.0

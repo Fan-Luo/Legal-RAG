@@ -157,36 +157,40 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 def build_pipeline_sync():
     """Build pipeline in a thread."""
-    global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR
+    global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR, ingest_service
     PIPELINE_READY = False
     PIPELINE_ERROR = None
-    ingest_service = IngestService(CFG)
+    
     try:
         logger.info("[API] 初始化 RAG Pipeline...")
         CFG = load_cfg()
+        ingest_service = IngestService(CFG)
         pipeline = RagPipeline(CFG)
         PIPELINE_READY = True
         logger.info("[API] RAG Pipeline 初始化完成")
     except Exception as e:
         PIPELINE_ERROR = repr(e)
         pipeline = None
+        ingest_service = None
         logger.exception("[API] RAG Pipeline 初始化失败")
 
 @app.on_event("startup")
 async def startup_event():
-    # Do not block startup; allow / and /health to come up immediately.
     def _selfcheck():
         time.sleep(2)
-        port = int(os.getenv("PORT") or "7860")
+        port = os.getenv("PORT")
+        if not port:
+            logger.info("[selfcheck] PORT not set; skip HTTP selfcheck")
+            return
+
         for p in ["/", "/health", "/ui/", "/ui/index.html"]:
             try:
-                r = requests.get(f"http://127.0.0.1:{port}{p}", timeout=2)
+                r = requests.get(f"http://127.0.0.1:{int(port)}{p}", timeout=2)
                 logger.info(f"[selfcheck] GET {p} -> {r.status_code}")
             except Exception as e:
                 logger.error(f"[selfcheck] GET {p} failed: {e}")
 
     threading.Thread(target=_selfcheck, daemon=True).start()
-    logger.info("[net] " + subprocess.getoutput("ss -ltnp | head -n 20"))
     asyncio.create_task(asyncio.to_thread(build_pipeline_sync))
 
 
@@ -434,7 +438,7 @@ async def rag_answer(body: dict, request: Request):
             yield _sse("error", {"error": str(e)})
 
     headers = {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-transform",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",  # 禁用 nginx/proxy 缓冲，确保实时推送
     }
