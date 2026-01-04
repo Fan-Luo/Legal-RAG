@@ -137,9 +137,6 @@ class RagPipeline:
         # LLM
         self.llm = LLMClient.from_config(cfg)
 
-        # Router
-        self.router = QueryRouter(llm_client=self.llm, llm_based=cfg.routing.llm_based)
-
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.zh_prompt_path = Path("legalrag/prompts/prompt_zh.json")
@@ -226,17 +223,18 @@ class RagPipeline:
     # -----------------------
     # Two-stage public API
     # -----------------------
-    def retrieve(self, question: str, top_k: Optional[int] = None) -> Tuple[Any, List[RetrievalHit], int]:
-        decision = self.router.route(question)
+    def retrieve(self, question: str, llm_override: Optional[LLMClient] = None, top_k: Optional[int] = None, decision: Optional[Any] = None) -> Tuple[Any, List[RetrievalHit], int]:
+        llm = llm_override or self.llm
+        if decision is None:
+            self.router = QueryRouter(llm_client=llm, llm_based=self.cfg.routing.llm_based)
+            decision = self.router.route(question)
 
         base_k = top_k or self.cfg.retrieval.top_k
         eff_top_k = int(base_k * getattr(decision, "top_k_factor", 1.0))
         eff_top_k = max(3, min(eff_top_k, 30))
 
-        hits = self.retriever.search(question, top_k=eff_top_k)
-        for h in hits:
-            h.source = getattr(h, 'source', 'retriever') 
-
+        hits = self.retriever.search(question, llm=llm, top_k=eff_top_k, decision=decision)
+       
         return decision, hits, eff_top_k
 
     def answer_from_hits(
@@ -297,7 +295,7 @@ class RagPipeline:
         stream_obj = stream_fn(messages)
         logger.info("[TIMING] chat_stream_call=%.3fs", time.time() - t_call0)
 
-        # Branch 1: async iterator/generator (OpenAI in your current implementation)
+        # Branch 1: async iterator/generator 
         if hasattr(stream_obj, "__aiter__"):
             first = True
             async for piece in stream_obj:
@@ -336,7 +334,8 @@ class RagPipeline:
 
 
     def answer(self, question: str, top_k: Optional[int] = None, llm_override: Optional[LLMClient] = None) -> RagAnswer:
-        decision, hits, eff_top_k = self.retrieve(question, top_k=top_k)
+        llm = llm_override or self.llm
+        decision, hits, eff_top_k = self.retrieve(question, llm, top_k=top_k)
         logger.info(
             "[RAG] query: %s; query_type=%s mode=%s top_k=%d",
             question,
@@ -344,4 +343,4 @@ class RagPipeline:
             getattr(decision, "mode", None),
             eff_top_k,
         )
-        return self.answer_from_hits(question, hits, decision=decision, llm_override=llm_override)
+        return self.answer_from_hits(question, hits, decision, llm)

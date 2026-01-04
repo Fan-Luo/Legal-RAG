@@ -35,8 +35,6 @@ def _is_restricted_sampling_model(model: str) -> bool:
         or "thinking" in m
     )
 
-
-
 class LLMClient(BaseModel):
     provider: str
     model_name: str
@@ -51,12 +49,19 @@ class LLMClient(BaseModel):
     top_p: float = 0.9
     repetition_penalty: float = 1.12
     no_repeat_ngram_size: int = 0
+    _default_instance: ClassVar[Optional["LLMClient"]] = None
+    _instances_by_key: ClassVar[Dict[str, "LLMClient"]] = {}
 
     class Config:
         arbitrary_types_allowed = True
 
     @classmethod
     def from_config(cls, cfg: AppConfig) -> "LLMClient":
+
+        # Singleton: return existing instance if already created 
+        if cls._default_instance is not None: 
+            return cls._default_instance
+
         llm_cfg = cfg.llm
         inst = cls(
             provider=llm_cfg.provider,
@@ -69,11 +74,17 @@ class LLMClient(BaseModel):
         
 
         inst._init_backend(llm_cfg)
+        cls._default_instance = inst
         return inst
 
 
     @classmethod
     def from_config_with_key(cls, cfg: AppConfig, openai_key: str | None):
+
+        key = openai_key or "__no_key__" 
+        if key in cls._instances_by_key: 
+            return cls._instances_by_key[key]
+
         llm_cfg = cfg.llm
 
         # If user provided a key, force OpenAI for this instance only.
@@ -100,6 +111,7 @@ class LLMClient(BaseModel):
         )
         logger.info(f"[LLM] override init provider={inst.provider} model_name={inst.model_name!r} env_OPENAI_MODEL={os.getenv('OPENAI_MODEL','')!r}")
         inst._init_backend(llm_cfg, override_openai_key=openai_key)
+        cls._instances_by_key[key] = inst
         return inst
 
     def _init_backend(self, llm_cfg, override_openai_key: str | None = None):
@@ -172,10 +184,10 @@ class LLMClient(BaseModel):
                 if prompt is None:
                     raise ValueError("Either prompt or messages must be provided.")
                 messages = [{"role": "user", "content": prompt}]
-                logger.info(f"[chat]: messages" )
+                # logger.info(f"[chat]: messages" )
             else:
                 prompt = prompt or ""
-                logger.info(f"[chat]: {prompt}" )
+                # logger.info(f"[chat]: {prompt}" )
             if self.provider == "openai":
                 logger.info(f"[LLM] OpenAI request model={self.model_name!r}")
                 if not self.model_name:
@@ -289,7 +301,7 @@ class LLMClient(BaseModel):
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-                logger.info(f"[_chat_qwen_messages] apply_chat_template")
+                # logger.info(f"[_chat_qwen_messages] apply_chat_template")
             else:
                 # fallback：拼接 
                 rendered = "\n\n".join([f"{m.get('role','user').upper()}: {m.get('content','')}" for m in messages]) + "\n\nASSISTANT:"
@@ -510,8 +522,6 @@ class LLMClient(BaseModel):
             except Exception:
                 logger.exception("[_async_streamer_iterator] failed")
                 break
-
-
 
     def _degraded_response(self, prompt: str, provider: Optional[str] = None) -> Dict[str, Any]:
         provider = provider or self.provider

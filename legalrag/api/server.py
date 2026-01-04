@@ -15,7 +15,7 @@ from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
-from legalrag.retrieval.builders.incremental_builder import IncrementalDenseBuilder
+from legalrag.retrieval.builders.incremental_dense_builder import IncrementalDenseBuilder
 from legalrag.ingest.service import IngestService
 
 from legalrag.utils.logger import get_logger
@@ -96,7 +96,6 @@ def root():
 
 @app.get("/health", include_in_schema=False)
 def health():
-    # Liveness: must always be fast and 200.
     return {"status": "ok"}
 
 
@@ -158,19 +157,21 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 def build_pipeline_sync():
     """Build pipeline in a thread."""
-    global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR
+    global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR, ingest_service
     PIPELINE_READY = False
     PIPELINE_ERROR = None
-    ingest_service = IngestService(CFG)
+    
     try:
         logger.info("[API] 初始化 RAG Pipeline...")
         CFG = load_cfg()
+        ingest_service = IngestService(CFG)
         pipeline = RagPipeline(CFG)
         PIPELINE_READY = True
         logger.info("[API] RAG Pipeline 初始化完成")
     except Exception as e:
         PIPELINE_ERROR = repr(e)
         pipeline = None
+        ingest_service = None
         logger.exception("[API] RAG Pipeline 初始化失败")
 
 @app.on_event("startup")
@@ -189,7 +190,6 @@ async def startup_event():
     threading.Thread(target=_selfcheck, daemon=True).start()
     logger.info("[net] " + subprocess.getoutput("ss -ltnp | head -n 20"))
     asyncio.create_task(asyncio.to_thread(build_pipeline_sync))
-
 
 # -----------------------
 # Two-stage RAG  
@@ -273,7 +273,8 @@ async def rag_retrieve(body: dict, request: Request):
         top_k = None
 
     try:
-        decision, hits, eff_top_k = pipeline.retrieve(question, top_k=top_k)
+        llm_override = _llm_override_from_request(request)
+        decision, hits, eff_top_k = pipeline.retrieve(question, llm_override, top_k=top_k)
 
         rid = uuid.uuid4().hex
         _purge_retrieve_cache()
@@ -435,7 +436,7 @@ async def rag_answer(body: dict, request: Request):
             yield _sse("error", {"error": str(e)})
 
     headers = {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-transform",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",  # 禁用 nginx/proxy 缓冲，确保实时推送
     }
