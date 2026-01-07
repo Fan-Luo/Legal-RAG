@@ -7,8 +7,8 @@ from typing import List, Tuple
 import faiss
 import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModel
-
+# from transformers import AutoTokenizer, AutoModel
+from FlagEmbedding import FlagModel
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
 from legalrag.utils.logger import get_logger
@@ -46,10 +46,16 @@ class VectorStore:
         logger.info(f"[VectorStore] Loading embedding model (BGE): {model_name}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
+        # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # self.model = AutoModel.from_pretrained(model_name)
+        self.model = FlagModel(
+            model_name,
+            query_instruction_for_retrieval="为这个法律问题生成表示以用于检索相关法律条文：",
+            use_fp16=torch.cuda.is_available(),         
+            device=self.device             
+        )
+        # self.model.to(self.device)
+        # self.model.eval()
         self.index: faiss.Index | None = None  
         self.chunks: List[LawChunk] = []
 
@@ -80,43 +86,48 @@ class VectorStore:
 
         logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks, index type: {type(self.index)}")
 
-    def _embed(self, texts: List[str]) -> np.ndarray:
+    def _embed(self, texts: List[str], is_query: bool = False) -> np.ndarray:
         """
-        使用 BGE-base 做句向量编码：
-        - tokenizer → model → mean pooling
-        - L2 归一化 → float32 numpy
+        使用 FlagModel 进行批量嵌入：
+        - is_query=True: 使用 encode_queries（加 instruction）
+        - is_query=False: 使用 encode（passage，不加 instruction）
         """
         if not texts:
-            return np.zeros((0, 768), dtype="float32")
+            dim = self.model.model.config.hidden_size  # 动态获取维度（通常768）
+            return np.zeros((0, dim), dtype="float32")
 
-        with torch.no_grad():
-            inputs = self.tokenizer(
+        if is_query:
+            embs = self.model.encode_queries(
                 texts,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="pt",
+                batch_size=64,
+                max_length=512, 
             )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        else:
+            embs = self.model.encode(
+                texts,
+                batch_size=64,
+                max_length=512, 
+            )
 
-            outputs = self.model(**inputs)
-            pooled = _mean_pool(outputs.last_hidden_state, inputs["attention_mask"])
-            emb = pooled.cpu().numpy().astype("float32")
-
-        faiss.normalize_L2(emb)
-        return emb
-
+        # FlagModel 已归一化，无需再 faiss.normalize_L2
+        return embs.astype("float32")
 
     def search(self, query: str, top_k: int) -> List[Tuple[LawChunk, float]]:
         """
-        使用 dense 向量（BGE）在 FAISS 上做内积检索。
+        使用 dense 向量在 FAISS 上做内积检索（query 使用 instruction）
         """
         self.load()
-        q_vec = self._embed([query])  # [1, dim]
+        q_vec = self._embed([query], is_query=True)  # ← 关键：query 加 instruction
+
+        # 临时提高 efSearch 以提升召回 
         # if hasattr(self.index, 'hnsw'):
-            # self.index.hnsw.efSearch = 256  # 临时提高召回
+        #     original_ef = self.index.hnsw.efSearch
+        #     self.index.hnsw.efSearch = 1024
 
         scores, idxs = self.index.search(q_vec, top_k)
+
+        # if hasattr(self.index, 'hnsw'):
+        #     self.index.hnsw.efSearch = original_ef
 
         hits: List[Tuple[LawChunk, float]] = []
         for score, idx in zip(scores[0], idxs[0]):
@@ -124,8 +135,5 @@ class VectorStore:
                 continue
             hits.append((self.chunks[idx], float(score)))
 
-        # 恢复默认 efSearch
-        # if hasattr(self.index, 'hnsw'):
-        #     self.index.hnsw.efSearch = default_ef_search
         return hits
         
