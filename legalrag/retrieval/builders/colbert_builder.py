@@ -55,13 +55,7 @@ def _write_meta(meta_file: Path, chunks: List[LawChunk]) -> None:
 def build_colbert_index(
     cfg: AppConfig,
     chunks: List[LawChunk],
-    override: bool = False,
-    *,
-    nbits: int = 2,
-    doc_maxlen: int = 300,
-    kmeans_niters: int = 4,
-    nranks: int = 1,
-    experiment: str = "legalrag",
+    override: bool = False
 ) -> Path:
     """
     Build an official ColBERTv2 (PLAID) index using Stanford ColBERT.
@@ -96,10 +90,15 @@ def build_colbert_index(
     if not enabled:
         raise RuntimeError("ColBERT is disabled: set cfg.retrieval.enable_colbert=True")
 
-    model_name: Optional[str] = getattr(rcfg, "colbert_model_name", None) or "colbert-ir/colbertv2.0"
-    index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "data/index/colbert")))
-    index_name: str = str(getattr(rcfg, "colbert_index_name", "legalrag"))
-    meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "data/index/colbert_meta.jsonl")))
+    model_name: Optional[str] = getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0") 
+    index_path: Path = Path(str(getattr(rcfg, "colbert_index_path")))
+    index_name: str = str(getattr(rcfg, "colbert_index_name"))
+    meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "index/colbert/colbert_meta.jsonl")))
+    nbits: int = int(getattr(rcfg, "colbert_nbits", 4))
+    doc_maxlen: int = int(getattr(rcfg, "colbert_doc_maxlen", 220))
+    kmeans_niters: int = int(getattr(rcfg, "colbert_kmeans_niters", 10))
+    nranks: int = int(getattr(rcfg, "colbert_nranks", 1))
+    experiment: str = str(getattr(rcfg, "colbert_experiment"))
 
     _ensure_colbert_importable()
 
@@ -109,9 +108,10 @@ def build_colbert_index(
         raise RuntimeError("All chunks are empty; cannot build ColBERT index.")
 
     # ColBERT writes under ColBERTConfig(root=...) and RunConfig(experiment=...)
-    lock = FileLock(str(index_path.with_suffix(".lock")))
+    lock = FileLock(str(index_path / ".colbert_build.lock"))
     with lock:
         index_path.mkdir(parents=True, exist_ok=True)
+        print('colbert index_path: ', str(index_path))
 
         # Meta is used by our system to map pid -> LawChunk for evidence display.
         _write_meta(meta_file, chunks)
@@ -120,20 +120,17 @@ def build_colbert_index(
         from colbert import Indexer
         from colbert.infra import Run, RunConfig, ColBERTConfig
 
-        with Run().context(RunConfig(nranks=nranks, experiment=experiment)):
+        with Run().context(RunConfig(nranks=nranks, experiment=experiment, root=str(index_path))):
             config = ColBERTConfig(
                 root=str(index_path),
                 doc_maxlen=doc_maxlen,
                 nbits=nbits,
                 kmeans_niters=kmeans_niters,
+                checkpoint=model_name
             )
             indexer = Indexer(checkpoint=model_name, config=config)
             indexer.index(name=index_name, collection=docs, overwrite=override)
-
-            # Official API provides absolute path to index folder.
-            try:
-                abs_index = Path(indexer.get_index())
-            except Exception: 
-                abs_index = index_path / experiment / "indexes" / index_name
+ 
+            abs_index = Path(indexer.get_index()) 
 
     return abs_index

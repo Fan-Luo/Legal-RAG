@@ -53,8 +53,8 @@ class RetrievalConfig(BaseModel):
     processed_glob: str = "*.jsonl"
 
     # -------- FAISS (Dense) --------
-    faiss_index_file: str = "index/faiss.index"
-    faiss_meta_file: str = "index/faiss_meta.jsonl"
+    faiss_index_file: str = "index/faiss/faiss.index"
+    faiss_meta_file: str = "index/faiss/faiss_meta.jsonl"
     embedding_model: str = "BAAI/bge-base-zh-v1.5"  # BAAI/bge-m3
 
     hnsw_m: int = 64
@@ -88,15 +88,16 @@ class RetrievalConfig(BaseModel):
 
     # -------- ColBERT (Late Interaction) --------
     enable_colbert: bool = True
-    colbert_index_path: str = "index/colbert"
-    colbert_meta_file: str = "index/colbert_meta.jsonl"
+    colbert_index_path: str = ""
+    colbert_meta_file: str = "index/colbert/colbert_meta.jsonl"
     colbert_weight: float = 0.35
-    colbert_backend: str = "pylate"          # or "auto"
-    colbert_index_name: str = "index"
-    colbert_model_name: str =  "colbert-ir/colbertv2.0" # "lightonai/GTE-ModernColBERT-v1"  
-    colbert_max_document_length: int = 300
-    colbert_split_documents: bool = False
-    colbert_overwrite: bool = True
+    colbert_index_name: str = "law"
+    colbert_model_name: str = "jinaai/jina-colbert-v2" # "colbert-ir/colbertv2.0"  
+    colbert_experiment: str =  "experiment"  
+    colbert_nranks: int = 1
+    colbert_nbits: int = 4
+    colbert_doc_maxlen: int = 220
+    colbert_kmeans_niters: int = 10
 
     # -------- HyDE --------
     enable_hyde: bool = False
@@ -128,7 +129,7 @@ class ServerConfig(BaseModel):
 class RoutingConfig(BaseModel):
     enable_router: bool = True
     llm_based: bool = True
-
+    issue_llm_refine: bool = True
 
 class AppConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
@@ -161,12 +162,18 @@ class AppConfig(BaseModel):
         r.faiss_index_file = abs_path(r.faiss_index_file)
         r.faiss_meta_file = abs_path(r.faiss_meta_file)
         r.bm25_index_file = abs_path(r.bm25_index_file)
-        r.colbert_index_path = abs_path(r.colbert_index_path)
+        if not getattr(r, "colbert_index_path", ""):
+            r.colbert_index_path = str(data_dir / "index" / "colbert")
+        else:
+            pth = Path(str(getattr(r, "colbert_index_path")))
+            r.colbert_index_path = str(pth if pth.is_absolute() else (data_dir / pth))
+
         r.colbert_meta_file = abs_path(r.colbert_meta_file )
 
         Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.processed_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.index_dir).mkdir(parents=True, exist_ok=True)
+        Path(cfg.retrieval.colbert_index_path).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.eval_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.upload_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.graph_dir).mkdir(parents=True, exist_ok=True)

@@ -38,8 +38,8 @@ dependencies = [
   "jieba>=0.42.1",
 
   # Embeddings 
-  "transformers==4.46.1",
-  "sentence-transformers==2.7.0",
+  "sentence-transformers",
+  "FlagEmbedding>=1.2.10",
 
   # ColBERT
   "colbert-ai>=0.2.19", 
@@ -55,7 +55,8 @@ dependencies = [
   "tqdm>=4.66",
   "pdfplumber",
   "jedi>=0.16",
-  "networkx"
+  "networkx",
+  "pyvis"
 ]
 
 [project.optional-dependencies]
