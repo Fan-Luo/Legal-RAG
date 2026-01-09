@@ -88,10 +88,9 @@ class LawGraphStore:
 
     def walk(
         self,
-        *,
         start_ids: List[str],
-        relation_max_depth: Optional[Dict[str, int]] = None,
         limit: int = 80,
+        relation_max_depth: Optional[Dict[str, int]] = None,
         rel_types: Optional[List[str]] = None,
         min_conf: float = 0.0,
     ) -> List[LawNode]:
@@ -106,6 +105,12 @@ class LawGraphStore:
         start_ids = [str(x).strip() for x in (start_ids or []) if str(x).strip()]
         if not start_ids:
             return []
+
+        rcfg = self.cfg.retrieval
+        if relation_max_depth is None:
+            relation_max_depth = rcfg.graph_walk_depths if hasattr(rcfg, "graph_walk_depths") else {"default": 2}
+        if rel_types is None:
+            rel_types = getattr(rcfg, "graph_rel_types", None) if rcfg else None
 
         default_max_d = relation_max_depth.get("default", 2)
         limit = max(1, int(limit))

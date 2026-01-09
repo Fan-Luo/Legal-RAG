@@ -152,7 +152,7 @@ class LLMClient(BaseModel):
                     self.model.to("cpu")
 
                 self.model.eval()
-                logger.info(f"[LLM] Qwen 模型 {model_path} 加载成功")
+                # logger.info(f"[LLM] Qwen 模型 {model_path} 加载成功")
 
             except Exception as e:
                 logger.exception(f"[LLM] Qwen 模型加载失败，进入降级模式: {e}")

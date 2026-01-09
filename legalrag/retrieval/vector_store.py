@@ -43,7 +43,7 @@ class VectorStore:
         self.meta_path = Path(rcfg.faiss_meta_file)
 
         model_name = rcfg.embedding_model
-        logger.info(f"[VectorStore] Loading embedding model (BGE): {model_name}")
+        # logger.info(f"[VectorStore] Loading embedding model (BGE): {model_name}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -75,7 +75,7 @@ class VectorStore:
         if hasattr(self.index, 'hnsw'):
             ef_search = getattr(self.cfg.retrieval, "hnsw_ef_search", 128)
             self.index.hnsw.efSearch = ef_search
-            logger.info(f"[FAISS] Set hnsw.efSearch = {ef_search}")
+            # logger.info(f"[FAISS] Set hnsw.efSearch = {ef_search}")
 
         self.chunks = []
         with self.meta_path.open("r", encoding="utf-8") as f:
@@ -84,7 +84,7 @@ class VectorStore:
                     obj = json.loads(line)
                     self.chunks.append(LawChunk.model_validate(obj))  
 
-        logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks, index type: {type(self.index)}")
+        # logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks, index type: {type(self.index)}")
 
     def _embed(self, texts: List[str], is_query: bool = False) -> np.ndarray:
         """

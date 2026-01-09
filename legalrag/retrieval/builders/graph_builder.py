@@ -313,7 +313,7 @@ class GraphBuilder:
                                 max_per_node=max_cite,
                             )
                             _safe_add(
-                                adj, aid, dst, "cited", 0.95,
+                                adj, dst, aid, "cited", 0.95,
                                 {"span": [m.start(), m.end()], "text": m.group(0)},
                                 max_per_node=max_cite,
                             )
