@@ -33,10 +33,6 @@ from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
 
 
-# =========================
-# 基础工具
-# =========================
-
 def set_seed(seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -622,7 +618,7 @@ def build_ground_truth_queries(
     # embedding 去重模型
     if embedding_model is None: 
         embedding_model = SentenceTransformer(cfg.retrieval.embedding_model)
-    logger.info(f"[Embedding] Using model: {embedding_model}")
+    # logger.info(f"[Embedding] Using model: {embedding_model}")
 
     if max_articles is None:
         max_articles = len(df_chunks)
@@ -655,9 +651,9 @@ def build_ground_truth_queries(
         return pd.DataFrame()
 
     # embedding 去重
-    logger.info(f"[Dedup] Before: {len(all_rows)}")
+    # logger.info(f"[Dedup] Before: {len(all_rows)}")
     all_rows = deduplicate_by_embedding(all_rows, embedding_model, threshold=0.85)
-    logger.info(f"[Dedup] After: {len(all_rows)}")
+    # logger.info(f"[Dedup] After: {len(all_rows)}")
 
     df = pd.DataFrame(all_rows)
 
@@ -704,7 +700,7 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="data/eval/synthetic_queries.jsonl",
+        default="data/eval/law_qa.jsonl",
         help="Output JSONL file path.",
     )
 

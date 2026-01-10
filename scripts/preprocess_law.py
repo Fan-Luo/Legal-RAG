@@ -244,7 +244,7 @@ def main() -> int:
     cfg = AppConfig.load(None)
 
     raw_dir = Path(cfg.paths.raw_dir)
-    out_path = Path(cfg.paths.contract_law_jsonl)
+    out_path = Path(cfg.paths.law_jsonl)
 
     txt_files = sorted(raw_dir.glob("*.txt"))
     logger.info(f"Raw dir: {raw_dir.resolve()}")

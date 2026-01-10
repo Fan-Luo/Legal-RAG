@@ -19,7 +19,7 @@ class IngestOrchestrator:
     status: Dict[str, Dict[str, Any]]
 
     def _load_corpus(self):
-        corpus = Path(self.cfg.paths.contract_law_jsonl)
+        corpus = Path(self.cfg.paths.law_jsonl)
         chunks = []
         with corpus.open("r", encoding="utf-8") as f:
             for line in f:
