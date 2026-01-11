@@ -152,12 +152,56 @@ class RagPipeline:
         self._en_user_prefix = (en_prompt_obj.get("user_prefix") or "").strip()
         self._en_user_suffix = (en_prompt_obj.get("user_suffix") or "").strip()
         self._en_user_examples = en_prompt_obj.get("examples") or {}
+        # Optional per-issue answer templates (issue_type -> template parts)
+        self._zh_issue_templates = zh_prompt_obj.get("issue_templates") or {}
+        self._en_issue_templates = en_prompt_obj.get("issue_templates") or {}
+
+        # Built-in minimal defaults so the feature works out-of-the-box.
+        # Users can override by adding `issue_templates` in prompt_zh.json / prompt_en.json.
+        if not self._zh_issue_templates:
+            self._zh_issue_templates = {
+                "contract_breach": {
+                    "user_suffix": "\n\n请按以下结构作答：\n1) 争议焦点/法律问题（Issue）\n2) 规则（Rule）：引用并解释相关条文\n3) 适用（Application）：将事实要点对应到条文要件\n4) 结论与救济（Conclusion/Remedy）：可主张的权利、请求、举证要点\n5) 风险与不确定性：需要进一步确认的关键事实\n",
+                },
+                "contract_formation": {
+                    "user_suffix": "\n\n请按以下结构作答：\n1) 合同是否成立/生效的判断要件\n2) 相关条文与要件解释\n3) 事实要点匹配与结论\n4) 可行行动建议（补签/通知/证据保全等）\n",
+                },
+                "tort": {
+                    "user_suffix": "\n\n请按以下结构作答：\n1) 侵权构成要件拆解（行为/过错/损害/因果关系）\n2) 相关条文与举证要点\n3) 责任形式与赔偿范围\n4) 争议点与风险\n",
+                },
+                "procedure": {
+                    "user_suffix": "\n\n请按以下结构作答：\n1) 程序路径（协商/调解/仲裁/诉讼）\n2) 管辖与时效要点（如适用）\n3) 证据清单与取证建议\n4) 诉讼请求/仲裁请求示例（要点级）\n",
+                },
+            }
+
+        if not self._en_issue_templates:
+            self._en_issue_templates = {
+                "contract_breach": {
+                    "user_suffix": "\n\nAnswer using this structure:\n1) Issue\n2) Rule (cite and explain relevant articles)\n3) Application (map facts to elements)\n4) Conclusion & remedies (claims, evidence checklist)\n5) Open facts / uncertainties\n",
+                },
+                "contract_formation": {
+                    "user_suffix": "\n\nAnswer using this structure:\n1) Formation/validity elements\n2) Rules (cite & interpret)\n3) Application & conclusion\n4) Practical next steps (notice, cure, evidence)\n",
+                },
+                "tort": {
+                    "user_suffix": "\n\nAnswer using this structure:\n1) Elements (act, fault, damage, causation)\n2) Rules & proof points\n3) Liability & damages scope\n4) Risks / disputed points\n",
+                },
+                "procedure": {
+                    "user_suffix": "\n\nAnswer using this structure:\n1) Procedural path (negotiation/mediation/arbitration/litigation)\n2) Jurisdiction & limitation notes (if applicable)\n3) Evidence checklist\n4) Claim outline (bullet-level)\n",
+                },
+            }
  
 
     # -----------------------
     # Prompt -> messages
     # -----------------------
-    def _build_messages(self, question: str, hits: List[RetrievalHit], query_type: str) -> List[Dict[str, str]]:
+    def _build_messages(
+        self,
+        question: str,
+        hits: List[RetrievalHit],
+        query_type: str,
+        *,
+        issue_type: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
 
         def is_chinese(text: str) -> bool:
             """Simple check: returns True if text contains at least one Chinese character."""
@@ -195,6 +239,20 @@ class RagPipeline:
         _user_suffix = self._zh_user_suffix if is_chinese_question else self._en_user_suffix
         _sys_part = self._zh_sys_part if is_chinese_question else self._en_sys_part
         _user_examples = self._zh_user_examples if is_chinese_question else self._en_user_examples
+
+        # Per-issue overrides (optional). If present, they can override any of:
+        # system / user_prefix / user_suffix / examples.
+        it = (issue_type or "").strip()
+        if it:
+            key = it.lower()
+            t = (self._zh_issue_templates or {}).get(key) if is_chinese_question else (self._en_issue_templates or {}).get(key)
+            if isinstance(t, dict):
+                _sys_part = str(t.get("system") or _sys_part).strip()
+                _user_prefix = str(t.get("user_prefix") or _user_prefix).strip()
+                _user_suffix = str(t.get("user_suffix") or _user_suffix).strip()
+                te = t.get("examples")
+                if isinstance(te, dict) and te:
+                    _user_examples = te
 
 
         law_context = "\n\n".join(law_context_parts) if law_context_parts else ""
@@ -242,14 +300,14 @@ class RagPipeline:
         question: str,
         hits: List[RetrievalHit],
         decision: Optional[Any] = None,
-        llm_override: Optional[LLMClient] = None,
+        llm: Optional[LLMClient] = None,
     ) -> RagAnswer:
         qt = getattr(decision, "query_type", None) if decision is not None else None
         qt_str = str(qt) if qt is not None else "OTHER"
 
-        messages = self._build_messages(question, hits, qt_str)
+        issue = getattr(decision, "issue_type", None) if decision is not None else None
+        messages = self._build_messages(question, hits, qt_str, issue_type=issue)
         # logger.info("[answer_from_hits] messages=%s", messages)
-        llm = llm_override or self.llm
 
         try:
             raw = llm.chat(messages=messages)
@@ -332,7 +390,6 @@ class RagPipeline:
                 break
             yield item
 
-
     def answer(self, question: str, top_k: Optional[int] = None, llm_override: Optional[LLMClient] = None) -> RagAnswer:
         llm = llm_override or self.llm
         decision, hits, eff_top_k = self.retrieve(question, llm, top_k=top_k)
@@ -343,4 +400,4 @@ class RagPipeline:
             getattr(decision, "mode", None),
             eff_top_k,
         )
-        return self.answer_from_hits(question, hits, decision, llm)
+        return self.answer_from_hits(question, hits, decision=decision, llm=llm)

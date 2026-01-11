@@ -1,262 +1,255 @@
 from __future__ import annotations
 
-from typing import List, Tuple, Optional
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
+from pydantic import BaseModel, Field
+from legalrag.config import AppConfig  
+from legalrag.llm.client import LLMClient  
+from legalrag.routing.legal_issue_extractor import (  
+    LegalIssueExtractor,
+    LegalIssueResult,
+    LegalIssueType,
+)
 
-from legalrag.schemas import QueryType, RoutingMode, RoutingDecision
-from legalrag.utils.text import normalize_whitespace
 
-
-class Rule:
+class RoutingMode(str, Enum):
     """
-    A simple rule mapping keywords -> (QueryType, RoutingMode, top_k_factor).
-
-    weight:
-      - used both as scoring weight (confidence) and as top_k_factor (how many hits to retrieve)
-    priority:
-      - used only for tie-break (higher wins)
+    Downstream code checks for suffix 'GRAPH_AUGMENTED', so keep that exact token.
     """
-
-    def __init__(
-        self,
-        name: str,
-        keywords: List[str],
-        qtype: QueryType,
-        weight: float,
-        mode: RoutingMode,
-        priority: int = 0,
-    ):
-        self.name = name
-        self.keywords = keywords
-        self.qtype = qtype
-        self.weight = weight
-        self.mode = mode
-        self.priority = priority
+    RAG = "RAG"
+    GRAPH_AUGMENTED = "GRAPH_AUGMENTED"
 
 
+class QueryType(str, Enum):
+    """
+    Used mainly for prompt conditioning. Values are stable strings.
+    """
+    CONTRACT = "contract"
+    TORT = "tort"
+    PROPERTY = "property"
+    FAMILY = "family"
+    INHERITANCE = "inheritance"
+    PERSONALITY = "personality"
+    UNJUST_ENRICHMENT = "unjust_enrichment"
+    AGENCY = "agency"
+    GUARANTEE = "guarantee"
+    GENERAL_CIVIL = "general_civil"
+    OTHER = "other"
+
+
+class RoutingDecision(BaseModel):
+    mode: RoutingMode = RoutingMode.RAG
+    query_type: QueryType = QueryType.GENERAL_CIVIL
+    top_k_factor: float = 1.0
+    explain: str = ""
+
+    legal_issue_type: LegalIssueType = LegalIssueType.OTHER
+    legal_issue_tags: List[str] = Field(default_factory=list)
+    signals: Dict[str, Any] = Field(default_factory=dict)
+
+
+@dataclass
 class QueryRouter:
-    """
-    Rule-first router for contract-law style questions.
+    llm_client: Optional[LLMClient] = None
+    llm_based: bool = False
+    cfg: Optional[AppConfig] = None
 
-    6 categories:
-      - DEFINITION: 概念/定义
-      - VALIDITY: 成立/生效/无效/可撤销
-      - PERFORMANCE: 履行/抗辩/风险承担/价款
-      - BREACH_REMEDY: 违约责任/违约金/赔偿/定金等救济
-      - TERMINATION: 解除/终止/解除后果
-      - PROCEDURE: 诉讼时效/举证/程序性问题
-
-    Graph-mode suggestions:
-      - DEFINITION: GRAPH_AUGMENTED (definitions + cross-ref heavy)
-      - PROCEDURE: GRAPH_AUGMENTED (time limits, interruption/suspension cross-ref)
-      - VALIDITY: GRAPH_AUGMENTED (voidable/invalid often cross-ref)
-      - others: default RAG
-    """
-
-    def __init__(self, llm_client=None, llm_based: bool = False, threshold: float = 0.9):
-        self.llm_client = llm_client
-        self.llm_based = llm_based
-        self.threshold = threshold
-
-        # Notes:
-        # - weight works as both "confidence weight" and "top_k_factor".
-        # - threshold default 0.9: a single strong match (weight>=1.0) usually triggers.
-        self.rules: List[Rule] = [
-            # PROCEDURE (often should override, hence high priority)
-            Rule(
-                name="procedure",
-                keywords=[
-                    "诉讼时效", "时效", "起算", "中止", "中断", "延长", "届满",
-                    "除斥期间", "期间", "催告", "通知到达", "送达",
-                    "举证", "证明责任", "证据", "管辖", "仲裁", "起诉", "受理", "程序",
-                    "是否及时", "是否超过", "两年", "三年", "一年", "知道或者应当知道",
-                ],
-                qtype=QueryType.PROCEDURE,
-                weight=1.3,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=60,
-            ),
-
-            # VALIDITY
-            Rule(
-                name="validity",
-                keywords=[
-                    "成立", "生效", "无效", "效力", "当然无效", "部分无效",
-                    "可撤销", "撤销", "撤销权", "撤销期限",
-                    "重大误解", "欺诈", "胁迫", "乘人之危", "显失公平",
-                    "意思表示", "表见代理", "代理权限", "恶意串通",
-                    "违反强制性规定", "违背公序良俗",
-                ],
-                qtype=QueryType.VALIDITY,
-                weight=1.2,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=50,
-            ),
-
-            # DEFINITION
-            Rule(
-                name="definition",
-                keywords=[
-                    "定义", "含义", "概念", "是什么", "什么是", "解释", "如何理解", "本法所称",
-                    "何谓", "如何认定", "构成要件",
-                ],
-                qtype=QueryType.DEFINITION,
-                weight=1.25,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=40,
-            ),
-
-            # TERMINATION
-            Rule(
-                name="termination",
-                keywords=[
-                    "解除", "解除合同", "解除权", "法定解除", "约定解除",
-                    "终止", "终止权", "解除通知", "解除期限", "解除后果",
-                    "返还", "恢复原状", "结算", "损失", "继续履行不能",
-                ],
-                qtype=QueryType.TERMINATION,
-                weight=1.2,
-                mode=RoutingMode.RAG,
-                priority=30,
-            ),
-
-            # BREACH_REMEDY
-            Rule(
-                name="breach_remedy",
-                keywords=[
-                    "违约", "违约责任", "违约金", "赔偿", "损失赔偿", "损害赔偿",
-                    "定金", "双倍返还", "继续履行", "采取补救措施", "减少价款",
-                    "违约方", "守约方", "责任承担", "赔偿范围", "可得利益",
-                    "与损失赔偿能否并存", "能否并存",
-                ],
-                qtype=QueryType.BREACH_REMEDY,
-                weight=1.25,
-                mode=RoutingMode.RAG,
-                priority=20,
-            ),
-
-            # PERFORMANCE
-            Rule(
-                name="performance",
-                keywords=[
-                    "履行", "履行期限", "履行地点", "履行方式",
-                    "交付", "受领", "价款", "付款", "支付", "结算",
-                    "质量", "数量", "标的", "瑕疵", "检验", "修理", "更换", "重作",
-                    "风险承担", "风险转移",
-                    "同时履行抗辩", "先履行抗辩", "不安抗辩", "抗辩",
-                    "代位", "撤销权",  # 有时也跟履行/保全相关（若你后续加“债的保全”可细分）
-                ],
-                qtype=QueryType.PERFORMANCE,
-                weight=1.15,
-                mode=RoutingMode.RAG,
-                priority=10,
-            ),
-        ]
-
-    def _score_rules(self, question: str) -> Tuple[Optional[Rule], float, List[str]]:
-        explanations: List[str] = []
-        best_rule: Optional[Rule] = None
-        best_score: float = 0.0
-
-        for rule in self.rules:
-            matched = [kw for kw in rule.keywords if kw in question]
-            match_count = len(matched)
-            if match_count <= 0:
-                continue
-
-            # score: count * weight; tie-break by priority
-            score = match_count * rule.weight
-
-            explanations.append(
-                f"[{rule.name}] matched={match_count} weight={rule.weight:.2f} "
-                f"score={score:.2f} qtype={rule.qtype.name} mode={rule.mode.value} "
-                f"examples={matched[:4]}"
-            )
-
-            if (score > best_score) or (
-                score == best_score and best_rule is not None and rule.priority > best_rule.priority
-            ) or (best_rule is None):
-                best_score = score
-                best_rule = rule
-
-        return best_rule, best_score, explanations
-
-    def _ask_llm(self, question: str) -> Optional[Rule]:
-        """
-        LLM fallback when rule score is low or ambiguous.
-        Expect EXACT one of:
-          DEFINITION / VALIDITY / PERFORMANCE / BREACH_REMEDY / TERMINATION / PROCEDURE / OTHER
-        """
-        if self.llm_client is None:
-            return None
-
-        prompt = f"""
-你是合同法法律问题分类器，请把问题分类为以下类别之一，并只返回英文类别名（不要解释）：
-
-  1) DEFINITION（概念/定义）：询问“是什么/含义/性质/法律概念”。
-
-  2) VALIDITY（成立/生效/无效/可撤销）：是否有效、是否可撤销、是否无效、成立与生效区分等。
-
-  3) PERFORMANCE（履行/抗辩/风险承担/价款）：是否应继续履行、是否可拒绝付款、风险承担、履行顺序等。
-
-  4) BREACH_REMEDY（违约责任/违约金/赔偿/定金等救济）：违约金是否过高、能否调整、赔偿范围、定金罚则、救济竞合。
-
-  5) TERMINATION（解除/终止/解除后果）：能否解除、解除条件、解除后果。
-
-  6) PROCEDURE（诉讼时效/举证/程序性）：是否超过诉讼时效、起算点、期间、时效中断/中止、程序要件。
-
-  7) OTHER（混合/不确定/超出候选条文覆盖范围）
-   - 问题包含多重法律争点（例如：欺诈 + 可撤销 + 时效 + 举证），但候选条文不足以覆盖全部争点；
-   - 或问题明显需要合同编之外的规则（例如：一般诉讼时效条款在总则/侵权编、证据规则、公司法税务等）；
-   - 或 router 无法可靠归为以上分类
-
-问题：{question}
-""".strip()
-
-        answer = self.llm_client.complete(prompt) if hasattr(self.llm_client, "complete") else self.llm_client.chat(prompt)
-        label = (answer or "").strip().upper()
-
-        mapping = {
-            "DEFINITION": (QueryType.DEFINITION, RoutingMode.GRAPH_AUGMENTED, 1.1),
-            "VALIDITY": (QueryType.VALIDITY, RoutingMode.GRAPH_AUGMENTED, 1.2),
-            "PERFORMANCE": (QueryType.PERFORMANCE, RoutingMode.RAG, 1),
-            "BREACH_REMEDY": (QueryType.BREACH_REMEDY, RoutingMode.RAG, 1.25),
-            "TERMINATION": (QueryType.TERMINATION, RoutingMode.RAG, 1.2),
-            "PROCEDURE": (QueryType.PROCEDURE, RoutingMode.GRAPH_AUGMENTED, 1.3),
-            "OTHER": (QueryType.OTHER, RoutingMode.RAG, 1),
-        }
-        qtype, mode, weight = mapping.get(label, (QueryType.PERFORMANCE, RoutingMode.RAG, 1.0))
-        return Rule(name="llm_fallback", keywords=[], qtype=qtype, weight=weight, mode=mode, priority=0)
+    def __post_init__(self) -> None:
+        self.issue_extractor = LegalIssueExtractor(llm=self.llm_client, cfg=self.cfg)
 
     def route(self, question: str) -> RoutingDecision:
-        q = normalize_whitespace(question)
-
-        best_rule, score, explanations = self._score_rules(q)
-
-        # Case 1: Rules confident enough
-        if best_rule and score >= self.threshold:
+        q = (question or "").strip()
+        if not q:
             return RoutingDecision(
-                query_type=best_rule.qtype,
-                mode=best_rule.mode,
-                top_k_factor=best_rule.weight,
-                explain="; ".join(explanations) if explanations else f"rule={best_rule.name}",
+                mode=RoutingMode.RAG,
+                query_type=QueryType.OTHER,
+                top_k_factor=1.0,
+                explain="empty question",
+                legal_issue_type=LegalIssueType.OTHER,
+                legal_issue_tags=[],
+                signals={"empty": True},
             )
 
-        # Case 2: Rule-based weak -> LLM fallback
-        if self.llm_based and self.llm_client:
-            llm_rule = self._ask_llm(q)
-            if llm_rule:
-                explanations.append(f"LLM fallback activated (score={score:.2f} < threshold={self.threshold:.2f}).")
-                return RoutingDecision(
-                    query_type=llm_rule.qtype,
-                    mode=llm_rule.mode,
-                    top_k_factor=llm_rule.weight,
-                    explain="; ".join(explanations),
+        issue: LegalIssueResult = self.issue_extractor.extract(q)
+        mode = self._decide_mode(q, issue)
+        qtype = self._map_issue_to_query_type(issue.legal_issue_type, q)
+        top_k_factor = self._top_k_factor(q, issue)
+
+        explain = "; ".join(
+            [s for s in [issue.explain, f"mode={mode}", f"query_type={qtype}"] if s]
+        )
+
+        # LLM overrides the final decision
+        if self.llm_based and self.llm_client is not None:
+            try:
+                mode, qtype, top_k_factor, llm_explain = self._llm_route(
+                    q, issue, fallback=(mode, qtype, top_k_factor)
+                )
+                explain = "; ".join([s for s in [explain, llm_explain] if s])
+            except Exception as e:  
+                explain = "; ".join(
+                    [s for s in [explain, f"llm_route_failed={type(e).__name__}"] if s]
                 )
 
-        # Case 3: Default fallback
         return RoutingDecision(
-            query_type=QueryType.OTHER,
-            mode=RoutingMode.RAG,
-            top_k_factor=1.0,
-            explain="Rule score low; fallback to default OTHER."
+            mode=mode,
+            query_type=qtype,
+            top_k_factor=float(top_k_factor),
+            explain=explain,
+            legal_issue_type=issue.legal_issue_type,
+            legal_issue_tags=list(issue.tags or []),
+            signals=issue.signals or {},
         )
+
+    # -----------------------
+    # Rule-based decisions
+    # -----------------------
+    def _decide_mode(self, q: str, issue: LegalIssueResult) -> RoutingMode:
+        s = q.lower()
+        has_article_marker = bool(issue.signals.get("has_article_ref"))
+        interpretive = any(
+            k in s
+            for k in [
+                "如何理解",
+                "解释",
+                "适用",
+                "构成要件",
+                "要件",
+                "定义",
+                "what is",
+                "interpret",
+                "meaning of",
+                "article",
+            ]
+        )
+        if has_article_marker or interpretive:
+            return RoutingMode.GRAPH_AUGMENTED
+        return RoutingMode.RAG
+
+    def _map_issue_to_query_type(self, t: LegalIssueType, q: str) -> QueryType:
+        if t in (
+            LegalIssueType.CONTRACT_FORMATION,
+            LegalIssueType.CONTRACT_BREACH,
+            LegalIssueType.CONTRACT_REMEDIES,
+            LegalIssueType.CONTRACT_INTERPRETATION,
+        ):
+            return QueryType.CONTRACT
+        if t in (
+            LegalIssueType.TORT_LIABILITY,
+            LegalIssueType.PERSONAL_INJURY,
+            LegalIssueType.PRODUCT_LIABILITY,
+            LegalIssueType.PRIVACY_DEFAMATION,
+        ):
+            return QueryType.TORT
+        if t in (
+            LegalIssueType.PROPERTY_OWNERSHIP,
+            LegalIssueType.REAL_ESTATE,
+            LegalIssueType.MORTGAGE,
+            LegalIssueType.POSSESSION,
+        ):
+            return QueryType.PROPERTY
+        if t in (
+            LegalIssueType.MARRIAGE_FAMILY,
+            LegalIssueType.DIVORCE,
+            LegalIssueType.CUSTODY,
+            LegalIssueType.MAINTENANCE,
+        ):
+            return QueryType.FAMILY
+        if t in (LegalIssueType.INHERITANCE, LegalIssueType.WILL_SUCCESSION):
+            return QueryType.INHERITANCE
+        if t in (LegalIssueType.PERSONALITY_RIGHTS,):
+            return QueryType.PERSONALITY
+        if t in (LegalIssueType.UNJUST_ENRICHMENT,):
+            return QueryType.UNJUST_ENRICHMENT
+        if t in (LegalIssueType.AGENCY,):
+            return QueryType.AGENCY
+        if t in (LegalIssueType.SURETY_GUARANTEE,):
+            return QueryType.GUARANTEE
+        return QueryType.GENERAL_CIVIL
+
+    def _top_k_factor(self, q: str, issue: LegalIssueResult) -> float:
+        s = q.lower()
+        broad = any(
+            k in s
+            for k in [
+                "有哪些",
+                "如何",
+                "怎么办",
+                "what are",
+                "how to",
+                "can i",
+                "should i",
+                "是否可以",
+            ]
+        )
+        has_article_marker = bool(issue.signals.get("has_article_ref"))
+        if broad and not has_article_marker:
+            return 1.35
+        return 1.0
+
+    # -----------------------
+    # LLM-based routing
+    # -----------------------
+    def _llm_route(
+        self,
+        question: str,
+        issue: LegalIssueResult,
+        fallback: Tuple[RoutingMode, QueryType, float],
+    ) -> Tuple[RoutingMode, QueryType, float, str]:
+        mode0, qtype0, k0 = fallback
+        llm = self.llm_client
+        if llm is None:
+            return mode0, qtype0, k0, "llm_route_skipped(no_llm)"
+
+        sys = (
+            "You are a routing module for a legal retrieval system. "
+            "Return ONLY a JSON object with keys: mode, query_type, top_k_factor. "
+            "mode in ['RAG','GRAPH_AUGMENTED']. "
+            "query_type in ['contract','tort','property','family','inheritance','personality','unjust_enrichment','agency','guarantee','general_civil']. "
+            "top_k_factor is a float in [0.8, 2.0]."
+        )
+        user = {
+            "question": question,
+            "heuristic_issue_type": str(issue.legal_issue_type),
+            "heuristic_tags": issue.tags,
+        }
+
+        text = str(
+            llm.chat(
+                messages=[
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": str(user)},
+                ]
+            )
+        )
+
+        mode, qtype, k = mode0, qtype0, k0
+
+        try:
+            import json
+
+            obj = json.loads(_extract_json(text))
+            m = str(obj.get("mode", "")).strip().upper()
+            qt = str(obj.get("query_type", "")).strip().lower()
+            kk = float(obj.get("top_k_factor", k0))
+
+            if m in ("RAG", "GRAPH_AUGMENTED"):
+                mode = RoutingMode(m)
+            if qt in [e.value for e in QueryType]:
+                qtype = QueryType(qt)
+            k = min(2.0, max(0.8, float(kk)))
+            return mode, qtype, k, "llm_route_ok"
+        except Exception:
+            return mode0, qtype0, k0, "llm_route_parse_failed"
+
+
+def _extract_json(text: str) -> str:
+    t = (text or "").strip()
+    if t.startswith("{") and t.endswith("}"):
+        return t
+    start = t.find("{")
+    end = t.rfind("}")
+    if start >= 0 and end > start:
+        return t[start : end + 1]
+    return "{}"

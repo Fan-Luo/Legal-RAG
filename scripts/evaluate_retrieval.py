@@ -15,7 +15,7 @@ def main():
     cfg = AppConfig.load()
     retriever = HybridRetriever(cfg)
 
-    eval_path = Path(cfg.paths.eval_dir) / "contract_law_qa.jsonl"
+    eval_path = Path(cfg.paths.eval_dir) / "law_qa.jsonl"
     if not eval_path.exists():
         logger.error(f"{eval_path} 不存在，先准备评估数据。")
         return

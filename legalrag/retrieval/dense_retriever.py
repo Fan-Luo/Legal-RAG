@@ -37,9 +37,9 @@ class DenseRetriever:
         self.store.load()
 
         k = max(1, int(top_k))
-        qvec = self.store._embed([query]).astype("float32")  # shape (1, dim)
+        q_vec = self.store._embed([query], is_query=True)  
 
-        scores, idxs = self.store.index.search(qvec, k)   
+        scores, idxs = self.store.index.search(q_vec, k)
         scores = scores[0].tolist()
         idxs = idxs[0].tolist()
 

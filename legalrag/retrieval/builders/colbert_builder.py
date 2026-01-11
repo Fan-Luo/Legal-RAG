@@ -55,13 +55,7 @@ def _write_meta(meta_file: Path, chunks: List[LawChunk]) -> None:
 def build_colbert_index(
     cfg: AppConfig,
     chunks: List[LawChunk],
-    override: bool = False,
-    *,
-    nbits: int = 2,
-    doc_maxlen: int = 300,
-    kmeans_niters: int = 4,
-    nranks: int = 1,
-    experiment: str = "legalrag",
+    override: bool = False
 ) -> Path:
     """
     Build an official ColBERTv2 (PLAID) index using Stanford ColBERT.
@@ -97,9 +91,14 @@ def build_colbert_index(
         raise RuntimeError("ColBERT is disabled: set cfg.retrieval.enable_colbert=True")
 
     model_name: Optional[str] = getattr(rcfg, "colbert_model_name", None) or "colbert-ir/colbertv2.0"
-    index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "data/index/colbert")))
-    index_name: str = str(getattr(rcfg, "colbert_index_name", "legalrag"))
+    index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "index/colbert")))
+    index_name: str = str(getattr(rcfg, "colbert_index_name", "index"))
     meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "data/index/colbert_meta.jsonl")))
+    nbits: int = int(getattr(rcfg, "colbert_nbits", 4))
+    doc_maxlen: int = int(getattr(rcfg, "colbert_doc_maxlen", 220))
+    kmeans_niters: int = int(getattr(rcfg, "colbert_kmeans_niters", 10))
+    nranks: int = int(getattr(rcfg, "colbert_nranks", 1))
+    experiment: str = str(getattr(rcfg, "colbert_experiment", "colbert_experiment"))
 
     _ensure_colbert_importable()
 
@@ -126,6 +125,7 @@ def build_colbert_index(
                 doc_maxlen=doc_maxlen,
                 nbits=nbits,
                 kmeans_niters=kmeans_niters,
+                checkpoint=model_name
             )
             indexer = Indexer(checkpoint=model_name, config=config)
             indexer.index(name=index_name, collection=docs, overwrite=override)

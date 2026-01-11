@@ -286,22 +286,23 @@ class HybridRetriever:
         dense_hits = self.search_dense(question, eff_top_k)
         bm25_hits = self.search_bm25(question, eff_top_k)
         colbert_hits = self.search_colbert(question, eff_top_k)
-        graph_hits: List[RetrievalHit] = []
-        mode = getattr(decision, "mode", None)
-        if getattr(rcfg, "enable_graph", False) and mode and (str(mode).upper().endswith("GRAPH_AUGMENTED") or str(mode) == "RoutingMode.GRAPH_AUGMENTED"):
-            seed_n = int(getattr(rcfg, "graph_seed_k", max(10, top_k * 3)))
-            seeds = dense_hits[:seed_n] + bm25_hits[:seed_n] + colbert_hits[:seed_n]
-            graph_hits = self.search_graph(question, eff_top_k, decision=decision, seeds=seeds)
 
         fused = self._fuse(
             dense_hits=dense_hits,
             bm25_hits=bm25_hits,
-            colbert_hits=colbert_hits,
-            graph_hits=graph_hits,
+            colbert_hits=colbert_hits 
         )
 
         min_final = float(getattr(rcfg, "min_final_score", 0.0))
         fused = [h for h in fused if float(h.score) >= min_final]
+
+        graph_hits: List[RetrievalHit] = []
+        mode = getattr(decision, "mode", None)
+        if getattr(rcfg, "enable_graph", False) and mode and ( (str(mode).upper().endswith("GRAPH_AUGMENTED") or str(mode) == "RoutingMode.GRAPH_AUGMENTED")):
+            seed_n = int(getattr(rcfg, "graph_seed_k", max(10, top_k * 3)))
+            seeds = fused[:seed_n]
+            graph_hits = self.search_graph(question, eff_top_k, decision=decision, seeds=seeds)
+            fused = seeds + graph_hits
 
         # optional rerank
         if getattr(rcfg, "enable_rerank", False):
@@ -348,8 +349,7 @@ class HybridRetriever:
         *,
         dense_hits: List[RetrievalHit],
         bm25_hits: List[RetrievalHit],
-        colbert_hits: List[RetrievalHit],
-        graph_hits: List[RetrievalHit],
+        colbert_hits: List[RetrievalHit], 
     ) -> List[RetrievalHit]:
         rcfg = self.cfg.retrieval
 
@@ -360,22 +360,19 @@ class HybridRetriever:
         weights: Dict[str, float] = {
             "dense": float(getattr(rcfg, "dense_weight", 0.55)),
             "bm25": float(getattr(rcfg, "bm25_weight", 0.35)),
-            "colbert": float(getattr(rcfg, "colbert_weight", 0.25)),
-            "graph": float(getattr(rcfg, "graph_weight", 0.20)),
+            "colbert": float(getattr(rcfg, "colbert_weight", 0.25)) 
         }
 
         # ensure sorted by score desc  
         dense_hits.sort(key=lambda h: float(h.score), reverse=True)
         bm25_hits.sort(key=lambda h: float(h.score), reverse=True)
-        colbert_hits.sort(key=lambda h: float(h.score), reverse=True)
-        graph_hits.sort(key=lambda h: float(h.score), reverse=True)
+        colbert_hits.sort(key=lambda h: float(h.score), reverse=True) 
 
         # rank lists
         rank_lists: Dict[str, List[str]] = {
             "dense": [h.chunk.id for h in dense_hits],
             "bm25": [h.chunk.id for h in bm25_hits],
-            "colbert": [h.chunk.id for h in colbert_hits],
-            "graph": [h.chunk.id for h in graph_hits],
+            "colbert": [h.chunk.id for h in colbert_hits] 
         }
 
         # membership (retrieved channels)
@@ -386,7 +383,7 @@ class HybridRetriever:
 
         # chunk lookup (prefer dense -> bm25 -> colbert -> graph) via setdefault order
         chunk_by_id: Dict[str, Any] = {}
-        for h in dense_hits + bm25_hits + colbert_hits + graph_hits:
+        for h in dense_hits + bm25_hits + colbert_hits:
             chunk_by_id.setdefault(h.chunk.id, h.chunk)
 
         # per-channel minmax normalized maps
@@ -400,8 +397,7 @@ class HybridRetriever:
         norm_map_by_channel: Dict[str, Dict[str, float]] = {
             "dense": _norm_map(dense_hits),
             "bm25": _norm_map(bm25_hits),
-            "colbert": _norm_map(colbert_hits),
-            "graph": _norm_map(graph_hits),
+            "colbert": _norm_map(colbert_hits) 
         }
 
         # RRF totals and raw per-channel contribution
@@ -505,8 +501,7 @@ class HybridRetriever:
                 "weighted_sum": float(weighted_sum_map.get(cid, 0.0)),
                 "dense_norm": float(norm_map_by_channel["dense"].get(cid, 0.0)),
                 "bm25_norm": float(norm_map_by_channel["bm25"].get(cid, 0.0)),
-                "colbert_norm": float(norm_map_by_channel["colbert"].get(cid, 0.0)),
-                "graph_norm": float(norm_map_by_channel["graph"].get(cid, 0.0)),
+                "colbert_norm": float(norm_map_by_channel["colbert"].get(cid, 0.0))
             }
 
             out.append(RetrievalHit(chunk=chunk, score=float(score), rank=r, source="retriever", score_breakdown=sb))

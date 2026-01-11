@@ -349,7 +349,7 @@ async def rag_answer(body: dict, request: Request):
         try:
             logger.info(f"answer_from_hits")
             ans = pipeline.answer_from_hits(
-                question, hits, decision=decision, llm_override=llm_override
+                question, hits, decision=decision, llm=llm_override
             )
             answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
             out_hits = _get(ans, "hits", []) or hits or []
@@ -418,7 +418,7 @@ async def rag_answer(body: dict, request: Request):
                 # fallback：先生成完整答案，再手动分块发送
                 final_text = "" 
                 final_ans = pipeline.answer_from_hits(
-                    question, hits, decision=decision, llm_override=llm_override
+                    question, hits, decision=decision, llm=llm_override
                 )
                 final_text = _get(final_ans, "answer", "") or _get(final_ans, "text", "") or ""
 

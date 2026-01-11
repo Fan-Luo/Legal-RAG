@@ -38,11 +38,11 @@ class ColBERTRetriever:
         rcfg = cfg.retrieval
 
         self.enabled: bool = bool(getattr(rcfg, "enable_colbert", False))
-        self.index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "data/index/colbert")))
-        self.index_name: str = str(getattr(rcfg, "colbert_index_name", "legalrag"))
+        self.index_path: Path = Path(str(getattr(rcfg, "colbert_index_path", "index/colbert")))
+        self.index_name: str = str(getattr(rcfg, "colbert_index_name", "index"))
         self.model_name: Optional[str] = getattr(rcfg, "colbert_model_name", None)  # kept for parity; not required at search time
-        self.meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "data/index/colbert_meta.jsonl")))
-        self.experiment: str = str(getattr(rcfg, "colbert_experiment", "legalrag"))
+        self.meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "index/colbert_meta.jsonl")))
+        self.experiment: str = str(getattr(rcfg, "colbert_experiment", "colbert_experiment"))
         self.nranks: int = int(getattr(rcfg, "colbert_nranks", 1))
 
         self._pid2chunk: Dict[int, LawChunk] = {}
@@ -93,7 +93,7 @@ class ColBERTRetriever:
         from colbert.infra import Run, RunConfig
 
         with Run().context(RunConfig(nranks=self.nranks, experiment=self.experiment)):
-            self._searcher = Searcher(index=self.index_name, collection=self._collection)
+            self._searcher = Searcher(index=self.index_name, collection=self._collection, checkpoint=self.model_name)
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[LawChunk, float]]:
         if not self.enabled:

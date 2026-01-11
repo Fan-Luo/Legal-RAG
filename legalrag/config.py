@@ -91,12 +91,13 @@ class RetrievalConfig(BaseModel):
     colbert_index_path: str = "index/colbert"
     colbert_meta_file: str = "index/colbert_meta.jsonl"
     colbert_weight: float = 0.35
-    colbert_backend: str = "pylate"          # or "auto"
     colbert_index_name: str = "index"
-    colbert_model_name: str =  "colbert-ir/colbertv2.0" # "lightonai/GTE-ModernColBERT-v1"  
-    colbert_max_document_length: int = 300
-    colbert_split_documents: bool = False
-    colbert_overwrite: bool = True
+    colbert_model_name: str = "jinaai/jina-colbert-v2" # "colbert-ir/colbertv2.0"  
+    colbert_experiment: str =  "colbert_experiment"  
+    colbert_nranks: int = 1
+    colbert_nbits: int = 4
+    colbert_doc_maxlen: int = 220
+    colbert_kmeans_niters: int = 10
 
     # -------- HyDE --------
     enable_hyde: bool = False
@@ -128,7 +129,7 @@ class ServerConfig(BaseModel):
 class RoutingConfig(BaseModel):
     enable_router: bool = True
     llm_based: bool = True
-
+    issue_llm_refine: bool = True
 
 class AppConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
