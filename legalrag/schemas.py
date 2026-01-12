@@ -30,26 +30,92 @@ class RetrievalHit(BaseModel):
     seed_article_id: Optional[str] = None
     score_breakdown: Optional[Dict[str, Any]] = None
 
-class QueryType(str, Enum):
+class TaskType(str, Enum):
     """
-    High-level legal question categories for contract law RAG.
+    Task/output structure axis for prompting.
     """
 
-    DEFINITION = "definition"  # 概念 / 定义 / 构成要件
-    VALIDITY = "validity"      # 合同成立、生效、无效、可撤销（欺诈、胁迫、显失公平等）
-    PERFORMANCE = "performance"    # 履行、抗辩、价款、风险承担、瑕疵履行等
-    BREACH_REMEDY = "breach_remedy"    # 违约责任、违约金、损害赔偿、定金、继续履行等救济
-    TERMINATION = "termination"    # 合同解除、终止、解除后果
-    PROCEDURE = "procedure"    # 诉讼时效、期间起算、中断中止、举证责任、程序性问题
-    OTHER = "other"   
+    JUDGE_STYLE = "judge_style"
+    STATUTE_EXEGESIS = "statute_exegesis"
+    RISK_ALERT = "risk_alert"
+    ELEMENTS_CHECKLIST = "elements_checklist"
+    COMPARATIVE_RULES = "comparative_rules"
+    PROCEDURE_EVIDENCE_LIST = "procedure_evidence_list"
+    OTHER = "other"
+
+
+class IssueType(str, Enum):
+    """
+    Legal issue axis for semantic classification.
+    """
+
+    GENERAL_CIVIL = "general_civil"
+    CIVIL_CAPACITY = "civil_capacity"
+    CIVIL_ACT_VALIDITY = "civil_act_validity"
+    AGENCY = "agency"
+    CIVIL_LIABILITY = "civil_liability"
+    LIMITATION_PERIOD = "limitation_period"
+
+    PROPERTY = "property"
+    OWNERSHIP = "ownership"
+    POSSESSION = "possession"
+    REGISTRATION = "registration"
+    NEIGHBOR_RELATION = "neighbor_relation"
+    PROPERTY_USE_RIGHT = "property_use_right"
+    MORTGAGE = "mortgage"
+    PLEDGE = "pledge"
+    LIEN = "lien"
+
+    CONTRACT = "contract"
+    CONTRACT_FORMATION = "contract_formation"
+    CONTRACT_VALIDITY = "contract_validity"
+    CONTRACT_INTERPRETATION = "contract_interpretation"
+    CONTRACT_PERFORMANCE = "contract_performance"
+    PERFORMANCE_DEFENSE = "performance_defense"
+    DEFECTIVE_PERFORMANCE = "defective_performance"
+    CONTRACT_TERMINATION = "contract_termination"
+    BREACH_REMEDY = "breach_remedy"
+    PENALTY_LIQUIDATED = "penalty_liquidated"
+    DEPOSIT = "deposit"
+    GUARANTEE = "guarantee"
+    CONTRACT_TRANSFER = "contract_transfer"
+
+    QUASI_CONTRACT = "quasi_contract"
+    NEGOTIORUM_GESTIO = "negotiorum_gestio"
+    UNJUST_ENRICHMENT = "unjust_enrichment"
+
+    PERSONALITY = "personality"
+    NAME_RIGHT = "name_right"
+    PORTRAIT_RIGHT = "portrait_right"
+    REPUTATION_RIGHT = "reputation_right"
+    PRIVACY_INFO = "privacy_info"
+    PERSONALITY_INFRINGEMENT = "personality_infringement"
+
+    MARRIAGE_FAMILY = "marriage_family"
+    MARRIAGE = "marriage"
+    DIVORCE = "divorce"
+    FAMILY_PROPERTY = "family_property"
+    CUSTODY_SUPPORT = "custody_support"
+
+    INHERITANCE = "inheritance"
+    INHERITANCE_WILL = "inheritance_will"
+    INHERITANCE_STATUTORY = "inheritance_statutory"
+    INHERITANCE_SHARE = "inheritance_share"
+
+    TORT = "tort"
+    TORT_LIABILITY = "tort_liability"
+    PERSONAL_INJURY = "personal_injury"
+    PRODUCT_LIABILITY = "product_liability"
+    MEDICAL_TORT = "medical_tort"
+    OTHER = "other"
 
 class RoutingMode(str, Enum):
-    DIRECT_LLM = "direct_llm"
-    RAG = "rag"
-    GRAPH_AUGMENTED = "graph_augmented"
+    RAG = "RAG"
+    GRAPH_AUGMENTED = "GRAPH_AUGMENTED"
 
 class RoutingDecision(BaseModel):
-    query_type: QueryType
+    task_type: TaskType
+    issue_type: IssueType
     mode: RoutingMode
     top_k_factor: float = 1.0
 

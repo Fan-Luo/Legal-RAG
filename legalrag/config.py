@@ -29,8 +29,8 @@ class LLMConfig(BaseModel):
     provider: str = "qwen-local"   # "qwen-local" | "openai"
 
     # 默认值 
-    model: str = "Qwen/Qwen2.5-3B-Instruct"
-    qwen_model: str = "Qwen/Qwen2.5-3B-Instruct"  
+    model: str = "Qwen/Qwen2.5-7B-Instruct"
+    qwen_model: str = "Qwen/Qwen2.5-7B-Instruct"  
     openai_model: str = "gpt-5-nano" # "gpt-4o-mini"
 
     # 可选 env 覆盖 

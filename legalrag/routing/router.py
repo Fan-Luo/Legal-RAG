@@ -1,262 +1,248 @@
 from __future__ import annotations
 
-from typing import List, Tuple, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+from pydantic import BaseModel, Field
+from legalrag.config import AppConfig
+from legalrag.llm.client import LLMClient
+from legalrag.routing.legal_issue_extractor import LegalIssueExtractor, IssueResult
+from legalrag.schemas import IssueType, RoutingMode, TaskType
+import json
 
-from legalrag.schemas import QueryType, RoutingMode, RoutingDecision
-from legalrag.utils.text import normalize_whitespace
+class RoutingDecision(BaseModel):
+    mode: RoutingMode = RoutingMode.RAG
+    task_type: TaskType = TaskType.JUDGE_STYLE
+    issue_type: IssueType = IssueType.OTHER
+    top_k_factor: float = 1.0
+    explain: str = ""
 
-
-class Rule:
-    """
-    A simple rule mapping keywords -> (QueryType, RoutingMode, top_k_factor).
-
-    weight:
-      - used both as scoring weight (confidence) and as top_k_factor (how many hits to retrieve)
-    priority:
-      - used only for tie-break (higher wins)
-    """
-
-    def __init__(
-        self,
-        name: str,
-        keywords: List[str],
-        qtype: QueryType,
-        weight: float,
-        mode: RoutingMode,
-        priority: int = 0,
-    ):
-        self.name = name
-        self.keywords = keywords
-        self.qtype = qtype
-        self.weight = weight
-        self.mode = mode
-        self.priority = priority
+    issue_tags: List[str] = Field(default_factory=list)
+    signals: Dict[str, Any] = Field(default_factory=dict)
 
 
+@dataclass
 class QueryRouter:
-    """
-    Rule-first router for contract-law style questions.
+    llm_client: Optional[LLMClient] = None
+    llm_based: bool = False
+    cfg: Optional[AppConfig] = None
 
-    6 categories:
-      - DEFINITION: 概念/定义
-      - VALIDITY: 成立/生效/无效/可撤销
-      - PERFORMANCE: 履行/抗辩/风险承担/价款
-      - BREACH_REMEDY: 违约责任/违约金/赔偿/定金等救济
-      - TERMINATION: 解除/终止/解除后果
-      - PROCEDURE: 诉讼时效/举证/程序性问题
-
-    Graph-mode suggestions:
-      - DEFINITION: GRAPH_AUGMENTED (definitions + cross-ref heavy)
-      - PROCEDURE: GRAPH_AUGMENTED (time limits, interruption/suspension cross-ref)
-      - VALIDITY: GRAPH_AUGMENTED (voidable/invalid often cross-ref)
-      - others: default RAG
-    """
-
-    def __init__(self, llm_client=None, llm_based: bool = False, threshold: float = 0.9):
-        self.llm_client = llm_client
-        self.llm_based = llm_based
-        self.threshold = threshold
-
-        # Notes:
-        # - weight works as both "confidence weight" and "top_k_factor".
-        # - threshold default 0.9: a single strong match (weight>=1.0) usually triggers.
-        self.rules: List[Rule] = [
-            # PROCEDURE (often should override, hence high priority)
-            Rule(
-                name="procedure",
-                keywords=[
-                    "诉讼时效", "时效", "起算", "中止", "中断", "延长", "届满",
-                    "除斥期间", "期间", "催告", "通知到达", "送达",
-                    "举证", "证明责任", "证据", "管辖", "仲裁", "起诉", "受理", "程序",
-                    "是否及时", "是否超过", "两年", "三年", "一年", "知道或者应当知道",
-                ],
-                qtype=QueryType.PROCEDURE,
-                weight=1.3,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=60,
-            ),
-
-            # VALIDITY
-            Rule(
-                name="validity",
-                keywords=[
-                    "成立", "生效", "无效", "效力", "当然无效", "部分无效",
-                    "可撤销", "撤销", "撤销权", "撤销期限",
-                    "重大误解", "欺诈", "胁迫", "乘人之危", "显失公平",
-                    "意思表示", "表见代理", "代理权限", "恶意串通",
-                    "违反强制性规定", "违背公序良俗",
-                ],
-                qtype=QueryType.VALIDITY,
-                weight=1.2,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=50,
-            ),
-
-            # DEFINITION
-            Rule(
-                name="definition",
-                keywords=[
-                    "定义", "含义", "概念", "是什么", "什么是", "解释", "如何理解", "本法所称",
-                    "何谓", "如何认定", "构成要件",
-                ],
-                qtype=QueryType.DEFINITION,
-                weight=1.25,
-                mode=RoutingMode.GRAPH_AUGMENTED,
-                priority=40,
-            ),
-
-            # TERMINATION
-            Rule(
-                name="termination",
-                keywords=[
-                    "解除", "解除合同", "解除权", "法定解除", "约定解除",
-                    "终止", "终止权", "解除通知", "解除期限", "解除后果",
-                    "返还", "恢复原状", "结算", "损失", "继续履行不能",
-                ],
-                qtype=QueryType.TERMINATION,
-                weight=1.2,
-                mode=RoutingMode.RAG,
-                priority=30,
-            ),
-
-            # BREACH_REMEDY
-            Rule(
-                name="breach_remedy",
-                keywords=[
-                    "违约", "违约责任", "违约金", "赔偿", "损失赔偿", "损害赔偿",
-                    "定金", "双倍返还", "继续履行", "采取补救措施", "减少价款",
-                    "违约方", "守约方", "责任承担", "赔偿范围", "可得利益",
-                    "与损失赔偿能否并存", "能否并存",
-                ],
-                qtype=QueryType.BREACH_REMEDY,
-                weight=1.25,
-                mode=RoutingMode.RAG,
-                priority=20,
-            ),
-
-            # PERFORMANCE
-            Rule(
-                name="performance",
-                keywords=[
-                    "履行", "履行期限", "履行地点", "履行方式",
-                    "交付", "受领", "价款", "付款", "支付", "结算",
-                    "质量", "数量", "标的", "瑕疵", "检验", "修理", "更换", "重作",
-                    "风险承担", "风险转移",
-                    "同时履行抗辩", "先履行抗辩", "不安抗辩", "抗辩",
-                    "代位", "撤销权",  # 有时也跟履行/保全相关（若你后续加“债的保全”可细分）
-                ],
-                qtype=QueryType.PERFORMANCE,
-                weight=1.15,
-                mode=RoutingMode.RAG,
-                priority=10,
-            ),
-        ]
-
-    def _score_rules(self, question: str) -> Tuple[Optional[Rule], float, List[str]]:
-        explanations: List[str] = []
-        best_rule: Optional[Rule] = None
-        best_score: float = 0.0
-
-        for rule in self.rules:
-            matched = [kw for kw in rule.keywords if kw in question]
-            match_count = len(matched)
-            if match_count <= 0:
-                continue
-
-            # score: count * weight; tie-break by priority
-            score = match_count * rule.weight
-
-            explanations.append(
-                f"[{rule.name}] matched={match_count} weight={rule.weight:.2f} "
-                f"score={score:.2f} qtype={rule.qtype.name} mode={rule.mode.value} "
-                f"examples={matched[:4]}"
-            )
-
-            if (score > best_score) or (
-                score == best_score and best_rule is not None and rule.priority > best_rule.priority
-            ) or (best_rule is None):
-                best_score = score
-                best_rule = rule
-
-        return best_rule, best_score, explanations
-
-    def _ask_llm(self, question: str) -> Optional[Rule]:
-        """
-        LLM fallback when rule score is low or ambiguous.
-        Expect EXACT one of:
-          DEFINITION / VALIDITY / PERFORMANCE / BREACH_REMEDY / TERMINATION / PROCEDURE / OTHER
-        """
-        if self.llm_client is None:
-            return None
-
-        prompt = f"""
-你是合同法法律问题分类器，请把问题分类为以下类别之一，并只返回英文类别名（不要解释）：
-
-  1) DEFINITION（概念/定义）：询问“是什么/含义/性质/法律概念”。
-
-  2) VALIDITY（成立/生效/无效/可撤销）：是否有效、是否可撤销、是否无效、成立与生效区分等。
-
-  3) PERFORMANCE（履行/抗辩/风险承担/价款）：是否应继续履行、是否可拒绝付款、风险承担、履行顺序等。
-
-  4) BREACH_REMEDY（违约责任/违约金/赔偿/定金等救济）：违约金是否过高、能否调整、赔偿范围、定金罚则、救济竞合。
-
-  5) TERMINATION（解除/终止/解除后果）：能否解除、解除条件、解除后果。
-
-  6) PROCEDURE（诉讼时效/举证/程序性）：是否超过诉讼时效、起算点、期间、时效中断/中止、程序要件。
-
-  7) OTHER（混合/不确定/超出候选条文覆盖范围）
-   - 问题包含多重法律争点（例如：欺诈 + 可撤销 + 时效 + 举证），但候选条文不足以覆盖全部争点；
-   - 或问题明显需要合同编之外的规则（例如：一般诉讼时效条款在总则/侵权编、证据规则、公司法税务等）；
-   - 或 router 无法可靠归为以上分类
-
-问题：{question}
-""".strip()
-
-        answer = self.llm_client.complete(prompt) if hasattr(self.llm_client, "complete") else self.llm_client.chat(prompt)
-        label = (answer or "").strip().upper()
-
-        mapping = {
-            "DEFINITION": (QueryType.DEFINITION, RoutingMode.GRAPH_AUGMENTED, 1.1),
-            "VALIDITY": (QueryType.VALIDITY, RoutingMode.GRAPH_AUGMENTED, 1.2),
-            "PERFORMANCE": (QueryType.PERFORMANCE, RoutingMode.RAG, 1),
-            "BREACH_REMEDY": (QueryType.BREACH_REMEDY, RoutingMode.RAG, 1.25),
-            "TERMINATION": (QueryType.TERMINATION, RoutingMode.RAG, 1.2),
-            "PROCEDURE": (QueryType.PROCEDURE, RoutingMode.GRAPH_AUGMENTED, 1.3),
-            "OTHER": (QueryType.OTHER, RoutingMode.RAG, 1),
-        }
-        qtype, mode, weight = mapping.get(label, (QueryType.PERFORMANCE, RoutingMode.RAG, 1.0))
-        return Rule(name="llm_fallback", keywords=[], qtype=qtype, weight=weight, mode=mode, priority=0)
+    def __post_init__(self) -> None:
+        self.issue_extractor = LegalIssueExtractor(llm=self.llm_client, cfg=self.cfg)
 
     def route(self, question: str) -> RoutingDecision:
-        q = normalize_whitespace(question)
-
-        best_rule, score, explanations = self._score_rules(q)
-
-        # Case 1: Rules confident enough
-        if best_rule and score >= self.threshold:
+        q = (question or "").strip()
+        if not q:
             return RoutingDecision(
-                query_type=best_rule.qtype,
-                mode=best_rule.mode,
-                top_k_factor=best_rule.weight,
-                explain="; ".join(explanations) if explanations else f"rule={best_rule.name}",
+                mode=RoutingMode.RAG,
+                task_type=TaskType.JUDGE_STYLE,
+                issue_type=IssueType.OTHER,
+                top_k_factor=1.0,
+                explain="empty question",
+                issue_tags=[],
+                signals={"empty": True},
             )
 
-        # Case 2: Rule-based weak -> LLM fallback
-        if self.llm_based and self.llm_client:
-            llm_rule = self._ask_llm(q)
-            if llm_rule:
-                explanations.append(f"LLM fallback activated (score={score:.2f} < threshold={self.threshold:.2f}).")
-                return RoutingDecision(
-                    query_type=llm_rule.qtype,
-                    mode=llm_rule.mode,
-                    top_k_factor=llm_rule.weight,
-                    explain="; ".join(explanations),
-                )
+        issue: IssueResult = self.issue_extractor.extract(q)
+        issue_type = issue.issue_type
+        mode = None
+        task_type = None
+        top_k_factor = None
+        explain_parts: List[str] = [issue.explain] if issue.explain else []
 
-        # Case 3: Default fallback
+        def _rule_based() -> Tuple[RoutingMode, TaskType, IssueType, float]:
+            return (
+                self._decide_mode(q, issue),
+                self._decide_task_type(q),
+                issue.issue_type,
+                self._top_k_factor(q, issue),
+            )
+
+        # Prefer LLM routing when available; fall back to rule-based only if LLM is unavailable or fails.
+        if self.llm_based and self.llm_client is not None:
+            try:
+                mode, task_type, issue_type, top_k_factor, llm_explain = self._llm_route(
+                    q, issue
+                )
+                if llm_explain:
+                    explain_parts.append(llm_explain)
+            except Exception as e:
+                mode, task_type, issue_type, top_k_factor = _rule_based()
+                explain_parts.append(f"llm_route_failed={type(e).__name__}")
+        else:
+            mode, task_type, issue_type, top_k_factor = _rule_based()
+
+        explain_parts.extend([f"mode={mode}", f"task_type={task_type}", f"issue_type={issue_type}"])
+        explain = "; ".join([s for s in explain_parts if s])
+
         return RoutingDecision(
-            query_type=QueryType.OTHER,
-            mode=RoutingMode.RAG,
-            top_k_factor=1.0,
-            explain="Rule score low; fallback to default OTHER."
+            mode=mode,
+            task_type=task_type,
+            issue_type=issue_type,
+            top_k_factor=float(top_k_factor),
+            explain=explain,
+            issue_tags=list(issue.tags or []),
+            signals=issue.signals or {},
         )
+
+    # -----------------------
+    # Rule-based decisions
+    # -----------------------
+    def _decide_mode(self, q: str, issue: IssueResult) -> RoutingMode:
+        s = q.lower()
+        has_article_marker = bool(issue.signals.get("has_article_ref"))
+        interpretive = any(
+            k in s
+            for k in [
+                "如何理解",
+                "解释",
+                "适用",
+                "构成要件",
+                "要件",
+                "定义",
+                "what is",
+                "interpret",
+                "meaning of",
+                "article",
+            ]
+        )
+        if has_article_marker or interpretive:
+            return RoutingMode.GRAPH_AUGMENTED
+        return RoutingMode.RAG
+
+    def _decide_task_type(self, q: str) -> TaskType:
+        s = q.lower()
+        elements_patterns = [
+            "构成要件",
+            "成立要件",
+            "构成要素",
+            "要件有哪些",
+            "要件是什么",
+            "要素有哪些",
+            "要素是什么",
+            "需要哪些条件",
+            "需要什么条件",
+            "需要哪些要件",
+            "需要什么要件",
+            "适用前提",
+            "适用条件",
+            "前提是什么",
+            "前提条件",
+            "条件是什么",
+            "条件有哪些",
+            "elements of",
+            "elements for",
+            "requirements for",
+            "prerequisites for",
+            "conditions for",
+            "what are the elements",
+            "what are the requirements",
+            "what are the conditions",
+        ]
+        if any(k in s for k in elements_patterns):
+            return TaskType.ELEMENTS_CHECKLIST
+        if any(k in s for k in ["是否可以", "能否", "可以", "能不能", "是否能", "can i", "can we", "is it possible"]):
+            return TaskType.JUDGE_STYLE
+        if any(k in s for k in ["什么是", "定义", "含义", "如何理解", "本法所称", "本条所称", "interpret", "meaning of"]):
+            return TaskType.STATUTE_EXEGESIS
+        if any(k in s for k in ["风险", "风险点", "注意事项", "提示", "risk", "alert"]):
+            return TaskType.RISK_ALERT
+        if any(k in s for k in ["区别", "对比", "比较", "差异", "versus", "compare"]):
+            return TaskType.COMPARATIVE_RULES
+        if any(k in s for k in ["证据", "举证", "证明", "程序", "流程", "起诉", "立案", "evidence", "procedure"]):
+            return TaskType.PROCEDURE_EVIDENCE_LIST
+        return TaskType.JUDGE_STYLE
+
+    def _top_k_factor(self, q: str, issue: IssueResult) -> float:
+        s = q.lower()
+        broad = any(
+            k in s
+            for k in [
+                "有哪些",
+                "如何",
+                "怎么办",
+                "what are",
+                "how to",
+                "can i",
+                "should i",
+                "是否可以",
+            ]
+        )
+        has_article_marker = bool(issue.signals.get("has_article_ref"))
+        if broad and not has_article_marker:
+            return 1.35
+        return 1.0
+
+    # -----------------------
+    # LLM-based routing
+    # -----------------------
+    def _llm_route(
+        self,
+        question: str,
+        issue: IssueResult,
+    ) -> Tuple[RoutingMode, TaskType, IssueType, float, str]:
+
+        llm = self.llm_client
+
+        sys = (
+            "You are an intent classification component for a legal question answering system."
+            "Your task is to select the most appropriate task type based on the user's question."
+            "Return ONLY a JSON object with keys: mode, task_type, issue_type, top_k_factor. "
+            "mode in ['RAG','GRAPH_AUGMENTED']. "
+            f"task_type in {[e.value for e in TaskType]}. "
+            "task_type meanings: "
+            "judge_style: use when the user requests an overall determination (a conclusion-first answer such as permitted/not permitted, valid/invalid, liable/not liable) and supporting reasoning based on cited provisions. "
+            "statute_exegesis: define/explain provisions without reaching a case-specific determination. "
+            "risk_alert: identify legal/compliance risks, triggers, and missing facts. "
+            "elements_checklist: use ONLY when the user explicitly requests an enumeration/checklist of required elements/conditions/prerequisites as the primary output (i.e., a condition list). "
+            "Do NOT choose elements_checklist merely because a determination could be derived from conditions; unless a checklist is explicitly requested, choose judge_style. "
+            "Tie-breaker: if ambiguous between judge_style and elements_checklist, choose judge_style. "
+            "comparative_rules: compare rules and differences; "
+            "procedure_evidence_list: procedure steps and evidence checklist; "
+            "other: use only when none fit. "
+            f"issue_type in {[e.value for e in IssueType]}. "
+            "top_k_factor is a float in [0.8, 2.0]."
+        )
+
+        user = {
+            "question": question,
+            "heuristic_issue_type": str(issue.issue_type),
+            "heuristic_tags": issue.tags,
+        }
+
+        text = str(
+            llm.chat(
+                messages=[
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": str(user)},
+                ]
+            )
+        )
+
+        try:
+            obj = json.loads(_extract_json(text))
+            m = str(obj.get("mode", "")).strip().upper()
+            tt = str(obj.get("task_type", "")).strip().lower()
+            it = str(obj.get("issue_type", "")).strip().lower()
+            kk = float(obj.get("top_k_factor", k0))
+
+            if m in ("RAG", "GRAPH_AUGMENTED"):
+                mode = RoutingMode(m)
+            if tt in [e.value for e in TaskType]:
+                task_type = TaskType(tt)
+            if it in [e.value for e in IssueType]:
+                issue_type = IssueType(it)
+            k = min(2.0, max(0.8, float(kk)))
+            return mode, task_type, issue_type, k, "llm_route_ok"
+        except Exception:
+            return _, _, _, _, "llm_route_parse_failed"
+
+
+def _extract_json(text: str) -> str:
+    t = (text or "").strip()
+    if t.startswith("{") and t.endswith("}"):
+        return t
+    start = t.find("{")
+    end = t.rfind("}")
+    if start >= 0 and end > start:
+        return t[start : end + 1]
+    return "{}"

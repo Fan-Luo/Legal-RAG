@@ -97,7 +97,7 @@ class LLMClient(BaseModel):
             model_name = openai_model or cfg_model or "gpt-4o-mini"
         elif provider == "qwen-local":
             cfg_model = (getattr(llm_cfg, "qwen_model", "") or "").strip()
-            model_name = cfg_model or "Qwen/Qwen2.5-3B-Instruct"
+            model_name = cfg_model or "Qwen/Qwen2.5-7B-Instruct"
         else:
             model_name = (getattr(llm_cfg, "model", "") or "").strip()
 
