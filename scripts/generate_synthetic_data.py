@@ -270,6 +270,8 @@ SYSTEM_PROMPT_EN = (
     "Do not copy or restate the legal article.\n"
     "Do not include article numbers or citations.\n"
     "Produce natural questions that real users would ask.\n"
+    "Self-check each question: is it natural, are connectors used appropriately, and is any rephrasing needed.\n"
+    "Avoid clunky connector phrases and keep each question natural.\n"
     "One question per line."
 )
 
@@ -284,6 +286,7 @@ def build_single_turn_prompt(text: str, law_name: str, article_no: str, role: st
 - 问题必须是你“真实可能会问”的，而不是复述条文。
 - 不要出现条文编号（如“第几条”）、“本法规定”等字样。
 - 不要直接照抄条文原句。
+- 生成后先自检：是否自然？连接词是否用得当？如不自然请改写。 
 - 每个问题单独一行。
 - 语言：中文。
 
@@ -301,6 +304,8 @@ Requirements:
 - Questions must sound like real user questions, not restatements of the article.
 - Do NOT include article numbers or citations.
 - Do NOT copy sentences from the article.
+- Self-check each question for naturalness and connector usage; rewrite if needed.
+- Avoid clunky connector phrases; split into two questions if a single sentence becomes awkward.
 - One question per line.
 - Language: English.
 
@@ -321,6 +326,8 @@ Rules:
 - User questions must be natural, realistic, and based on the article.
 - Do NOT copy or restate the article.
 - Do NOT include article numbers or citations.
+- Self-check each user question for naturalness and connector usage; rewrite if needed.
+- Avoid clunky connector phrases; split into two questions if a single sentence becomes awkward.
 - Keep each turn short and natural.
 - Output format:
 User: ...

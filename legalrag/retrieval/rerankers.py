@@ -79,7 +79,7 @@ def _to_doc_text(doc: TextLike, content_key: str = "text") -> str:
     if isinstance(doc, str):
         return doc
     if isinstance(doc, dict):
-        for k in (content_key, "text", "content", "passage", "chunk", "body"):
+        for k in (content_key, "text", "content", "provision", "chunk", "body"):
             if k in doc and isinstance(doc[k], str):
                 return doc[k]
         return str(doc)
@@ -122,25 +122,25 @@ class CrossEncoderReranker:
 
 LLM_RERANK_SYSTEM_PROMPT = """
 You are a precise ranking model. 
-Your task is to evaluate how well a candidate passage answers a user query.
+Your task is to evaluate how well a candidate legal provisions answers a user query.
 
 Rules:
 - Output ONLY a JSON object.
 - JSON format: {"score": float, "reason": "string"}
 - score MUST be between 0 and 1.
-- score=1.0 means the passage directly answers the query.
-- score=0.0 means the passage is irrelevant.
+- score=1.0 means the provision directly answers the query.
+- score=0.0 means the provision is irrelevant.
 - Keep "reason" short.
 - Do NOT add any text outside JSON.
 """
 
-def build_llm_rerank_prompt(query: str, passage: str) -> str:
+def build_llm_rerank_prompt(query: str, provision: str) -> str:
     return f"""
 Query:
 {query}
 
-Candidate passage:
-{passage}
+Candidate provision:
+{provision}
 
 Evaluate relevance and return JSON only.
 """
