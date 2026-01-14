@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path 
+from pathlib import Path
 from typing import List, Optional, Dict
+import os
 from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,11 +41,14 @@ class LLMConfig(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
     max_context_tokens: int = 4096
-    max_new_tokens: int = 512
+    max_new_tokens: int = 2048
     temperature: float = 0.5
     top_p: float = 0.9
     repetition_penalty: float = 1.12
     no_repeat_ngram_size: int = 0  # 0 表示不启用    
+    request_timeout: float = 30.0
+    max_retries: int = 2
+    retry_backoff: float = 0.6
 
 class RetrievalConfig(BaseModel):
     # -------- Corpus --------
@@ -140,7 +144,7 @@ class AppConfig(BaseModel):
     routing: RoutingConfig = RoutingConfig()
 
     @classmethod
-    def load(cls, config_file: Optional[str] = None) -> "AppConfig":
+    def load(cls, config_file: Optional[str] = None, index_version: Optional[str] = None) -> "AppConfig":
         if config_file:
             p = Path(config_file)
             if p.exists():
@@ -153,26 +157,32 @@ class AppConfig(BaseModel):
         cfg = cls()
 
         data_dir = Path(cfg.paths.data_dir)
+        index_root = Path(cfg.paths.index_dir)
 
         def abs_path(rel: str) -> str:
             return str(data_dir / rel)
 
+        from legalrag.index.registry import IndexRegistry
+        registry = IndexRegistry(index_root)
+        requested_version = (index_version or os.getenv("LEGALRAG_INDEX_VERSION", "").strip()) or None
+        if requested_version:
+            active_index_dir = registry.ensure_version_dir(requested_version)
+        else:
+            active_index_dir = registry.active_index_dir()
+
         r = cfg.retrieval
         r.processed_file = abs_path(r.processed_file)
-        r.faiss_index_file = abs_path(r.faiss_index_file)
-        r.faiss_meta_file = abs_path(r.faiss_meta_file)
-        r.bm25_index_file = abs_path(r.bm25_index_file)
-        if not getattr(r, "colbert_index_path", ""):
-            r.colbert_index_path = str(data_dir / "index" / "colbert")
-        else:
-            pth = Path(str(getattr(r, "colbert_index_path")))
-            r.colbert_index_path = str(pth if pth.is_absolute() else (data_dir / pth))
-
-        r.colbert_meta_file = abs_path(r.colbert_meta_file )
+        r.faiss_index_file = str(active_index_dir / "faiss" / "faiss.index")
+        r.faiss_meta_file = str(active_index_dir / "faiss" / "faiss_meta.jsonl")
+        r.bm25_index_file = str(active_index_dir / "bm25.pkl")
+        r.colbert_index_path = str(active_index_dir / "colbert")
+        r.colbert_meta_file = str(active_index_dir / "colbert" / "colbert_meta.jsonl")
 
         Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.processed_dir).mkdir(parents=True, exist_ok=True)
-        Path(cfg.paths.index_dir).mkdir(parents=True, exist_ok=True)
+        index_root.mkdir(parents=True, exist_ok=True)
+        registry.versions_dir().mkdir(parents=True, exist_ok=True)
+        active_index_dir.mkdir(parents=True, exist_ok=True)
         Path(cfg.retrieval.colbert_index_path).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.eval_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.paths.upload_dir).mkdir(parents=True, exist_ok=True)

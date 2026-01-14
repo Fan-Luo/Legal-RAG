@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import faiss  
 import numpy as np
@@ -46,6 +47,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-faiss", action="store_true", help="Skip FAISS in default build.")
     p.add_argument("--no-bm25", action="store_true", help="Skip BM25 in default build.")
     p.add_argument("--no-colbert", action="store_true", help="Skip ColBERT.")
+    p.add_argument(
+        "--index-version",
+        type=str,
+        default="",
+        help="Write indexes into data/index/versions/<version> and activate if requested.",
+    )
+    p.add_argument(
+        "--activate",
+        action="store_true",
+        help="Activate the provided --index-version after building.",
+    )
 
 
     return p.parse_args()
@@ -53,7 +65,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    cfg = AppConfig.load()
+    idx_version = (args.index_version or "").strip() or None
+    cfg = AppConfig.load(index_version=idx_version)
     rcfg = cfg.retrieval
 
     rcfg.hnsw_m = args.hnsw_m
@@ -84,6 +97,11 @@ def main() -> None:
             build_colbert_index(cfg, chunks)
         except Exception as e:
             print(f"⚠️ Warning: ColBERT index build failed, continuing without it.\nReason: {e}")
+
+    if idx_version and args.activate:
+        from legalrag.index.registry import IndexRegistry
+        registry = IndexRegistry(Path(cfg.paths.index_dir))
+        registry.activate(idx_version)
 
 if __name__ == "__main__":
     main()
