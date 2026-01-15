@@ -13,10 +13,13 @@ from filelock import FileLock
 import time
 from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
+from legalrag.llm.gateway import LLMGateway
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.retrieval.builders.incremental_dense_builder import IncrementalDenseBuilder
 from legalrag.ingest.service import IngestService
+from legalrag.schemas import RetrievalHit
+from legalrag.routing.router import RoutingDecision
 
 from legalrag.utils.logger import get_logger
 
@@ -30,6 +33,7 @@ ingest_service: IngestService | None = None
 
 PIPELINE_READY = False
 PIPELINE_ERROR: Optional[str] = None
+RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "").strip()
 
 
 def detect_gpu() -> bool:
@@ -166,6 +170,12 @@ def build_pipeline_sync():
         CFG = load_cfg()
         ingest_service = IngestService(CFG)
         pipeline = RagPipeline(CFG)
+        pipeline.llm = LLMGateway(
+            pipeline.llm,
+            request_timeout=CFG.llm.request_timeout,
+            max_retries=CFG.llm.max_retries,
+            retry_backoff=CFG.llm.retry_backoff,
+        )
         PIPELINE_READY = True
         logger.info("[API] RAG Pipeline 初始化完成")
     except Exception as e:
@@ -227,7 +237,17 @@ def _serialize_hits(hits: list[Any]) -> list[dict[str, Any]]:
     return hit_rows
 
 
-def _llm_override_from_request(request: Request) -> Optional[LLMClient]:
+def _deserialize_hits(hit_rows: list[dict[str, Any]]) -> list[RetrievalHit]:
+    hits: list[RetrievalHit] = []
+    for row in hit_rows or []:
+        try:
+            hits.append(RetrievalHit.model_validate(row))
+        except Exception:
+            continue
+    return hits
+
+
+def _llm_override_from_request(request: Request) -> Optional[Any]:
     """
     Create a per-request LLM override when:
       - server provider=disabled, or
@@ -240,13 +260,23 @@ def _llm_override_from_request(request: Request) -> Optional[LLMClient]:
     if getattr(CFG.llm, "provider", "") == "disabled":
         if not user_openai_key:
             raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
-        return LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
+        return LLMGateway(
+            LLMClient.from_config_with_key(CFG, openai_key=user_openai_key),
+            request_timeout=CFG.llm.request_timeout,
+            max_retries=CFG.llm.max_retries,
+            retry_backoff=CFG.llm.retry_backoff,
+        )
 
     if getattr(CFG.llm, "provider", "") == "openai":
         if not os.getenv(CFG.llm.api_key_env, "").strip():
             if not user_openai_key:
                 raise HTTPException(status_code=401, detail="OpenAI API Key required. Please enter it in the UI.")
-            return LLMClient.from_config_with_key(CFG, openai_key=user_openai_key)
+            return LLMGateway(
+                LLMClient.from_config_with_key(CFG, openai_key=user_openai_key),
+                request_timeout=CFG.llm.request_timeout,
+                max_retries=CFG.llm.max_retries,
+                retry_backoff=CFG.llm.retry_backoff,
+            )
 
     return None
 
@@ -273,8 +303,20 @@ async def rag_retrieve(body: dict, request: Request):
         top_k = None
 
     try:
-        llm_override = _llm_override_from_request(request)
-        decision, hits, eff_top_k = pipeline.retrieve(question, llm_override, top_k=top_k)
+        if RETRIEVAL_URL:
+            resp = requests.post(
+                f"{RETRIEVAL_URL.rstrip('/')}/retrieve",
+                json={"question": question, "top_k": top_k},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            decision = RoutingDecision.model_validate(payload.get("decision") or {})
+            hits = _deserialize_hits(payload.get("hits") or [])
+            eff_top_k = int(payload.get("top_k") or top_k or 0) or len(hits)
+        else:
+            llm_override = _llm_override_from_request(request)
+            decision, hits, eff_top_k = pipeline.retrieve(question, llm_override, top_k=top_k)
 
         rid = uuid.uuid4().hex
         _purge_retrieve_cache()
@@ -479,7 +521,7 @@ async def rag_query(body: dict, request: Request):
 # PDF ingest
 # -----------------------
 @app.post("/ingest/pdf")
-async def ingest_pdf(file: UploadFile, background_tasks: BackgroundTasks):
+async def ingest_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     if ingest_service is None:
         raise HTTPException(status_code=500, detail="Service not initialized")
     return await ingest_service.ingest_pdf_and_schedule(file, background_tasks)

@@ -5,6 +5,7 @@ from typing import List
 from FlagEmbedding import FlagModel
 import faiss
 import numpy as np
+import os
 import torch
 # from transformers import AutoModel, AutoTokenizer
 
@@ -28,6 +29,7 @@ def _get_embedder(model_name: str, device: str = "cuda" if torch.cuda.is_availab
     使用 FlagModel 加载嵌入模型（支持 fp16 加速 + instruction）
     """
     if model_name not in _embedding_cache:
+        # os.environ.setdefault("FLAGEMBEDDING_USE_MULTI_PROCESS", "0")
         # FlagModel 内部处理 tokenizer + model + instruction
         model = FlagModel(
             model_name,

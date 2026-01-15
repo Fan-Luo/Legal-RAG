@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    environment:
+      - RETRIEVAL_URL=http://retrieval:8001
+      - PORT=7860
+    ports:
+      - "7860:7860"
+    depends_on:
+      - retrieval
+  retrieval:
+    build: .
+    environment:
+      - PORT=8001
+    command: ["bash", "-lc", "uvicorn legalrag.services.retrieval_api:app --host 0.0.0.0 --port 8001"]
+  index:
+    build: .
+    environment:
+      - PORT=8002
+    command: ["bash", "-lc", "uvicorn legalrag.services.index_api:app --host 0.0.0.0 --port 8002"]

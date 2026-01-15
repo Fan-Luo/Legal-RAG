@@ -171,7 +171,7 @@ class HybridRetriever:
                 self.graph = None
 
     # -----------------------
-    # Per-channel APIs (Notebook-friendly)
+    # Per-channel APIs  
     # -----------------------
     def search_dense(self, question: str, top_k: int = 10) -> List[RetrievalHit]:
         top_k = max(1, int(top_k))

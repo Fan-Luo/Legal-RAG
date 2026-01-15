@@ -6,6 +6,7 @@ from typing import List, Tuple
 
 import faiss
 import numpy as np
+import os
 import torch
 # from transformers import AutoTokenizer, AutoModel
 from FlagEmbedding import FlagModel
@@ -46,6 +47,8 @@ class VectorStore:
         # logger.info(f"[VectorStore] Loading embedding model (BGE): {model_name}")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # ask FlagEmbedding to avoid multi-process encoding.
+        # os.environ.setdefault("FLAGEMBEDDING_USE_MULTI_PROCESS", "0")
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         # self.model = AutoModel.from_pretrained(model_name)
         self.model = FlagModel(
@@ -100,13 +103,13 @@ class VectorStore:
             embs = self.model.encode_queries(
                 texts,
                 batch_size=64,
-                max_length=512, 
+                max_length=512,
             )
         else:
             embs = self.model.encode(
                 texts,
                 batch_size=64,
-                max_length=512, 
+                max_length=512,
             )
 
         # FlagModel 已归一化，无需再 faiss.normalize_L2
