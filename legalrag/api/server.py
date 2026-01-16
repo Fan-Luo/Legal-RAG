@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os, subprocess, uuid
+import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List, Tuple
 import threading, time, requests
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,12 +14,13 @@ from filelock import FileLock
 import time
 from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
+from legalrag.llm.context import set_request_id, reset_request_id
 from legalrag.llm.gateway import LLMGateway
 from legalrag.pipeline.rag_pipeline import RagPipeline
 from legalrag.retrieval.bm25_retriever import BM25Retriever
 from legalrag.retrieval.builders.incremental_dense_builder import IncrementalDenseBuilder
 from legalrag.ingest.service import IngestService
-from legalrag.schemas import RetrievalHit
+from legalrag.schemas import RetrievalHit, RoutingMode, TaskType, IssueType
 from legalrag.routing.router import RoutingDecision
 
 from legalrag.utils.logger import get_logger
@@ -42,7 +44,6 @@ def detect_gpu() -> bool:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
-
 
 def load_cfg() -> AppConfig:
     """
@@ -88,6 +89,7 @@ def load_cfg() -> AppConfig:
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # /app
 UI_PATH = BASE_DIR / "ui"
 logger.info(f"[boot] UI_PATH={UI_PATH} exists={UI_PATH.exists()}")
+logger.info(f"[boot] RETRIEVAL_URL={RETRIEVAL_URL or ''}")
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -112,6 +114,37 @@ def ready():
         "has_gpu": detect_gpu(),
         "provider": getattr(getattr(CFG, "llm", None), "provider", None),
     }
+
+
+@app.get("/debug/ingest/preview", include_in_schema=False)
+def debug_ingest_preview(doc_id: str, n: int = 5):
+    if not doc_id:
+        raise HTTPException(status_code=400, detail="Missing doc_id")
+    try:
+        n = max(1, min(50, int(n)))
+    except Exception:
+        n = 5
+
+    if CFG is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
+
+    processed_dir = Path(CFG.paths.processed_dir)
+    path = processed_dir / f"ingested_{doc_id}.jsonl"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="jsonl not found")
+
+    rows = []
+    with path.open("r", encoding="utf-8") as f:
+        for _ in range(n):
+            line = f.readline()
+            if not line:
+                break
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                rows.append({"raw": line.strip()})
+
+    return {"doc_id": doc_id, "path": str(path), "rows": rows}
 
 if UI_PATH.exists():
     app.mount("/ui", StaticFiles(directory=str(UI_PATH), html=True), name="ui")
@@ -178,11 +211,33 @@ def build_pipeline_sync():
         )
         PIPELINE_READY = True
         logger.info("[API] RAG Pipeline 初始化完成")
+        _warmup_pipeline()
     except Exception as e:
         PIPELINE_ERROR = repr(e)
         pipeline = None
         ingest_service = None
         logger.exception("[API] RAG Pipeline 初始化失败")
+
+def _warmup_pipeline():
+    logger.info("[warmup] started")
+    if not PIPELINE_READY or pipeline is None:
+        logger.info("[warmup] skip: pipeline not ready")
+        return
+    try:
+        decision = RoutingDecision(
+            mode=RoutingMode.RAG,
+            task_type=TaskType.JUDGE_STYLE,
+            issue_type=IssueType.OTHER,
+            top_k_factor=1.0,
+            explain="warmup",
+        )
+        # warmup retrieval only; avoid any LLM calls
+        pipeline.retriever.search("法律条文", llm=None, top_k=3, decision=decision)
+        logger.info("[warmup] retrieval ok")
+    except Exception:
+        logger.exception("[warmup] retrieval failed")
+    finally:
+        logger.info("[warmup] done")
 
 @app.on_event("startup")
 async def startup_event():
@@ -292,9 +347,15 @@ async def rag_retrieve(body: dict, request: Request):
     if not PIPELINE_READY or pipeline is None or CFG is None:
         raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
 
+    req_id = uuid.uuid4().hex
+    set_request_id(req_id)
+
     question = (body.get("question") or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
+
+    mode = "remote" if RETRIEVAL_URL else "local"
+    logger.info("[query] /rag/retrieve rid=%s mode=%s question=%s", req_id, mode, question)
 
     top_k = body.get("top_k", None)
     try:
@@ -352,6 +413,9 @@ async def rag_answer(body: dict, request: Request):
     if not PIPELINE_READY or pipeline is None or CFG is None:
         raise HTTPException(status_code=503, detail="RAG pipeline is warming up")
 
+    req_id = uuid.uuid4().hex
+    set_request_id(req_id)
+
     accept = (request.headers.get("accept") or "").lower()
     stream = bool(body.get("stream")) or ("text/event-stream" in accept)
 
@@ -372,6 +436,14 @@ async def rag_answer(body: dict, request: Request):
 
     if not question:
         raise HTTPException(status_code=400, detail="Missing 'question'")
+
+    logger.info(
+        "[query] /rag/answer rid=%s question=%s retrieval_id=%s stream=%s",
+        req_id,
+        question,
+        rid or "-",
+        int(stream),
+    )
 
     if hits is None:
         # Stateless fallback is intentionally unsupported for now (hits are complex objects).
@@ -412,6 +484,146 @@ async def rag_answer(body: dict, request: Request):
     # -----------------------------
     import json as _json
 
+    def _extract_section_objects(buf: str) -> List[Dict[str, Any]]:
+        key_idx = buf.find("\"sections\"")
+        if key_idx < 0:
+            return []
+        arr_start = buf.find("[", key_idx)
+        if arr_start < 0:
+            return []
+
+        sections: List[Dict[str, Any]] = []
+        in_str = False
+        esc = False
+        depth_arr = 0
+        depth_obj = 0
+        obj_start = None
+
+        i = arr_start
+        while i < len(buf):
+            ch = buf[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == "\"":
+                    in_str = False
+                i += 1
+                continue
+
+            if ch == "\"":
+                in_str = True
+                i += 1
+                continue
+
+            if ch == "[":
+                depth_arr += 1
+            elif ch == "]":
+                depth_arr -= 1
+                if depth_arr <= 0:
+                    break
+            elif ch == "{":
+                if depth_arr >= 1 and depth_obj == 0:
+                    obj_start = i
+                depth_obj += 1
+            elif ch == "}":
+                if depth_obj > 0:
+                    depth_obj -= 1
+                    if depth_obj == 0 and obj_start is not None:
+                        obj_text = buf[obj_start : i + 1]
+                        try:
+                            sections.append(_json.loads(obj_text))
+                        except Exception:
+                            pass
+                        obj_start = None
+            i += 1
+
+        return sections
+
+    def _extract_item_objects(buf: str) -> List[List[Any]]:
+        key_idx = buf.find("\"sections\"")
+        if key_idx < 0:
+            return []
+        arr_start = buf.find("[", key_idx)
+        if arr_start < 0:
+            return []
+
+        sections_items: List[List[Any]] = []
+        in_str = False
+        esc = False
+        depth_arr = 0
+        depth_obj = 0
+        obj_start = None
+
+        i = arr_start
+        while i < len(buf):
+            ch = buf[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == "\"":
+                    in_str = False
+                i += 1
+                continue
+
+            if ch == "\"":
+                in_str = True
+                i += 1
+                continue
+
+            if ch == "[":
+                depth_arr += 1
+                i += 1
+                continue
+            if ch == "]":
+                depth_arr -= 1
+                if depth_arr <= 0:
+                    break
+                i += 1
+                continue
+            if ch == "{":
+                if depth_arr >= 1 and depth_obj == 0:
+                    obj_start = i
+                depth_obj += 1
+                i += 1
+                continue
+            if ch == "}":
+                if depth_obj > 0:
+                    depth_obj -= 1
+                    if depth_obj == 0 and obj_start is not None:
+                        obj_text = buf[obj_start : i + 1]
+                        try:
+                            section = _json.loads(obj_text)
+                            items = section.get("items")
+                            if isinstance(items, list):
+                                sections_items.append(items)
+                            else:
+                                sections_items.append([])
+                        except Exception:
+                            pass
+                        obj_start = None
+                i += 1
+                continue
+            i += 1
+
+        return sections_items
+
+    def _sentence_split(text: str) -> List[str]:
+        text = (text or "").strip()
+        if not text:
+            return []
+        text = text.replace("\r\n", "\n")
+        parts = re.split(r"(?<=[。！？!?;；])\s+|(?<=[。！？!?;；])", text)
+        out = []
+        for p in parts:
+            s = p.strip()
+            if s:
+                out.append(s)
+        return out
+
     def _sse(event: str, data_obj: Any) -> bytes:
         if isinstance(data_obj, str):
             data_str = data_obj
@@ -441,6 +653,10 @@ async def rag_answer(body: dict, request: Request):
             if callable(stream_fn):
                 logger.info(f"callable(stream_fn)")
                 last_ping = time.time()
+                text_buf = ""
+                sent_sections = 0
+                sent_items: List[int] = []
+                sent_sentences: Dict[Tuple[int, int], int] = {}
                 # 实时 token 流式输出
                 async for chunk in stream_fn(
                     question, hits, decision=decision, llm_override=llm_override
@@ -452,7 +668,64 @@ async def rag_answer(body: dict, request: Request):
                     dt = round(now - t0, 3)
                     # logger.info("[SSE] token dt=%.3f len=%d", dt, len(chunk))
                     if chunk:
+                        text_buf += chunk
                         yield _sse("token", {"text": chunk, "dt": dt})
+                        sections = _extract_section_objects(text_buf)
+                        if len(sections) > sent_sections:
+                            for idx in range(sent_sections, len(sections)):
+                                yield _sse("section", {"index": idx, "section": sections[idx]})
+                            sent_sections = len(sections)
+                        items = _extract_item_objects(text_buf)
+                        if len(items) > len(sent_items):
+                            sent_items.extend([0] * (len(items) - len(sent_items)))
+                        for s_idx, s_items in enumerate(items):
+                            if not isinstance(s_items, list):
+                                continue
+                            start = sent_items[s_idx]
+                            if len(s_items) > start:
+                                for i_idx in range(start, len(s_items)):
+                                    yield _sse("item", {"section_index": s_idx, "item_index": i_idx, "item": s_items[i_idx]})
+                                    item_text = ""
+                                    if isinstance(s_items[i_idx], str):
+                                        item_text = s_items[i_idx]
+                                    elif isinstance(s_items[i_idx], dict):
+                                        t = s_items[i_idx].get("text") or s_items[i_idx].get("summary") or ""
+                                        item_text = str(t)
+                                    sentences = _sentence_split(item_text)
+                                    for j, sent in enumerate(sentences):
+                                        yield _sse(
+                                            "sentence",
+                                            {
+                                                "section_index": s_idx,
+                                                "item_index": i_idx,
+                                                "sentence_index": j,
+                                                "sentence": sent,
+                                            },
+                                        )
+                                sent_items[s_idx] = len(s_items)
+                            # update sentences for existing items
+                            for i_idx in range(start):
+                                key = (s_idx, i_idx)
+                                prev = sent_sentences.get(key, 0)
+                                item_text = ""
+                                if isinstance(s_items[i_idx], str):
+                                    item_text = s_items[i_idx]
+                                elif isinstance(s_items[i_idx], dict):
+                                    t = s_items[i_idx].get("text") or s_items[i_idx].get("summary") or ""
+                                    item_text = str(t)
+                                sentences = _sentence_split(item_text)
+                                if len(sentences) > prev:
+                                    for j in range(prev, len(sentences)):
+                                        yield _sse(
+                                            "sentence",
+                                            {
+                                                "section_index": s_idx,
+                                                "item_index": i_idx,
+                                                "sentence_index": j,
+                                                "sentence": sentences[j],
+                                            },
+                                        )
+                                    sent_sentences[key] = len(sentences)
 
                 yield _sse("done", {"ok": True, "dt": round(time.time()-t0, 3)})
 
@@ -531,4 +804,6 @@ async def ingest_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(
 def ingest_status(doc_id: str):
     if ingest_service is None:
         raise HTTPException(status_code=500, detail="Service not initialized")
-    return ingest_service.get_status(doc_id)
+    status = ingest_service.get_status(doc_id)
+    logger.info("[Ingest][status] doc_id=%s -> %s", doc_id, status)
+    return status

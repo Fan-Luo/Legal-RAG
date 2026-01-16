@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     unzip \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
@@ -14,14 +15,14 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
 
 COPY . /app
 WORKDIR /app/data
-RUN pwd && ls -la && python download_index.py
+RUN pwd && ls -la && python download_data.py
 
 # 回到 /app 再启动服务
 WORKDIR /app
 
-RUN test -f /app/data/index/faiss.index \
- && test -f /app/data/index/faiss_meta.jsonl \
- && test -f /app/data/index/bm25.pkl
+RUN test -f /app/data/index/bm25.pkl \
+ && test -f /app/data/index/faiss/faiss.index \
+ && test -f /app/data/index/faiss/faiss_meta.jsonl
 
 
 EXPOSE 7860

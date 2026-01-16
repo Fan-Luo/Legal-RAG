@@ -3,6 +3,9 @@ from fastapi import UploadFile, BackgroundTasks
 from legalrag.ingest.ingestor import PDFIngestor
 from legalrag.ingest.orchestrator import IngestOrchestrator
 from legalrag.ingest.task_queue import TaskQueue
+from legalrag.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class IngestService:
     def __init__(self, cfg):
@@ -22,11 +25,22 @@ class IngestService:
             "added": 0,
             "error": None,
         }
+        logger.info(
+            "[Ingest][status] init doc_id=%s jsonl=%s source=%s",
+            result.doc_id,
+            result.jsonl_path,
+            result.source,
+        )
         self.queue.enqueue(self.orchestrator.faiss_job, result.jsonl_path, result.doc_id)
-        self.queue.enqueue(self.orchestrator.bm25_job, result.doc_id)
+        self.queue.enqueue(self.orchestrator.bm25_job, result.jsonl_path, result.doc_id)
         self.queue.enqueue(self.orchestrator.colbert_job, result.doc_id)
         self.queue.enqueue(self.orchestrator.graph_job, result.doc_id)
         return result
 
     def get_status(self, doc_id: str):
-        return self.status.get(doc_id, {})
+        st = self.status.get(doc_id, {})
+        if not st:
+            logger.info("[Ingest][status] doc_id=%s missing", doc_id)
+        else:
+            logger.info("[Ingest][status] doc_id=%s status=%s", doc_id, st)
+        return st

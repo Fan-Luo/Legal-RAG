@@ -103,6 +103,10 @@ class RetrievalConfig(BaseModel):
     colbert_doc_maxlen: int = 220
     colbert_kmeans_niters: int = 10
 
+    # -------- Ingest rebuild toggles --------
+    ingest_rebuild_colbert: bool = True
+    ingest_rebuild_graph: bool = True
+
     # -------- HyDE --------
     enable_hyde: bool = False
 
@@ -111,7 +115,8 @@ class RetrievalConfig(BaseModel):
     rerank_top_n: int = 30
     rrf_alpha: float = 0.5
     rerank_beta: float = 0.35
-    rerank_ce_model: str = "BAAI/bge-reranker-base"
+    rerank_ce_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_use_llm: bool = False
 
     # -------- Fusion --------
     fusion_method: str = "rrf_norm_blend"
@@ -122,6 +127,8 @@ class RetrievalConfig(BaseModel):
 class PDFConfig(BaseModel):
     enable_ocr: bool = True
     ocr_lang: str = "chi_sim"
+    use_layout_extraction: bool = True
+    use_docling: bool = True
 
 
 class ServerConfig(BaseModel):

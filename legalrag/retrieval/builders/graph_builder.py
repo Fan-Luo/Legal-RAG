@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
@@ -215,7 +216,8 @@ class GraphBuilder:
     def build_from_chunks(self, chunks: List[LawChunk]) -> Path:
         out_graph = Path(self.cfg.paths.law_graph_jsonl)
         out_graph.parent.mkdir(parents=True, exist_ok=True)
-        out_graph.write_text("", encoding="utf-8")
+        tmp_graph = out_graph.with_suffix(".tmp")
+        tmp_graph.write_text("", encoding="utf-8")
 
         # stable order for prev/next
         def _sort_key(c: LawChunk):
@@ -451,7 +453,7 @@ class GraphBuilder:
                             break
 
         # write nodes
-        with out_graph.open("a", encoding="utf-8") as f:
+        with tmp_graph.open("a", encoding="utf-8") as f:
             for c in chunks:
                 aid = str(getattr(c, "article_id", "") or getattr(c, "id", "") or "").strip()
                 if not aid:
@@ -470,6 +472,7 @@ class GraphBuilder:
                 }
                 f.write(json.dumps(node, ensure_ascii=False) + "\n")
 
+        os.replace(tmp_graph, out_graph)
         logger.info(
             "[GRAPH] built %d nodes -> %s (relations include prev/next/cite/defined_by/defines_term)",
             len(chunks),
