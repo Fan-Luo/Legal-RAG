@@ -198,6 +198,35 @@
         border: 1px solid var(--border);
         background: #fff;
       }
+
+      .sec{
+        margin: 18px 0;
+        padding-left: 14px;
+      }
+
+      .sec-title{
+        font-weight: 750;
+        margin-bottom: 6px;
+      }
+
+      .sec-list{
+        margin: 0 0 0 18px;
+        padding-left: 18px;
+      }
+      .sec-list li{
+        margin: 10px 0;
+      }
+      .sec-list.single{
+        list-style: none;
+        padding-left: 0;
+        margin-left: 18px;
+      }
+      .quote{
+        display: block;
+        color: #475569;
+        font-style: italic;
+        margin-bottom: .5em;
+      }
       .msg.user .bubble{
         background: #f1f5ff;
         border-color: rgba(37,99,235,.25);
@@ -363,7 +392,7 @@
         display: flex;
         align-items: center;
         gap: 3px;
-        font-size: 16px;
+        font-size: 15px;
         width: 100%;
       }
 
@@ -581,7 +610,7 @@
       // ==================== 多语言支持 ====================
       const translations = {
         en: {
-          subtitle: "Contract Law · RAG",
+          subtitle: "Trustworthy legal guidance backed by verifiable legal sources",
           newChat: "New chat",
           send: "Send",
           clear: "Clear",
@@ -605,6 +634,7 @@
           indexingScheduled: "Indexing scheduled.",
           indexError: "Index error",
           indexReady: "Index ready.",
+          referencesTitle: "Referenced Provisions",
           disclaimer: "Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.",
           placeholder: "Type your legal question… ",
           chooseFile: "Choose File",
@@ -615,7 +645,7 @@
           apiKeyHint: "Please provide your OpenAI key to enable answers.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session."
         },
         zh: {
-          subtitle: "合同法 · RAG",
+          subtitle: "基于可核查法律来源的法律助手",
           newChat: "新对话",
           send: "发送",
           clear: "清空",
@@ -639,6 +669,7 @@
           indexingScheduled: "索引任务已安排",
           indexError: "索引错误",
           indexReady: "索引已完成",
+          referencesTitle: "参考条文列表",
           disclaimer: "免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。",
           placeholder: "输入你的法律问题…",
           chooseFile: "选择文件",
@@ -795,6 +826,175 @@
         contentEl.innerHTML = safe;
       }
 
+      function setBubbleContentHtml(contentEl, html) {
+        contentEl.innerHTML = html;
+      }
+
+      function tryParseJson(text) {
+        if (!text) return null;
+        let t = text.trim();
+        if (t.startsWith("```")) {
+          t = t.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+        }
+        try { return JSON.parse(t); } catch (e) {}
+        const start = t.indexOf("{");
+        const end = t.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+          const candidate = t.slice(start, end + 1);
+          try { return JSON.parse(candidate); } catch (e) {
+            console.debug("[ui] JSON parse failed", e);
+            return null;
+          }
+        }
+        console.debug("[ui] JSON parse failed: no object envelope");
+        return null;
+      }
+
+      function tryParseJsonPartial(text) {
+        if (!text) return null;
+        let t = text.trim();
+        if (t.startsWith("```")) {
+          t = t.replace(/^```(json)?/i, "");
+        }
+        const start = t.indexOf("{");
+        if (start < 0) return null;
+        let depth = 0;
+        let inStr = false;
+        let esc = false;
+        let lastEnd = -1;
+        for (let i = start; i < t.length; i += 1) {
+          const ch = t[i];
+          if (inStr) {
+            if (esc) {
+              esc = false;
+            } else if (ch === "\\") {
+              esc = true;
+            } else if (ch === "\"") {
+              inStr = false;
+            }
+            continue;
+          }
+          if (ch === "\"") {
+            inStr = true;
+            continue;
+          }
+          if (ch === "{") depth += 1;
+          if (ch === "}") {
+            depth -= 1;
+            if (depth === 0) lastEnd = i;
+          }
+        }
+        if (lastEnd < 0) return null;
+        const candidate = t.slice(start, lastEnd + 1);
+        try { return JSON.parse(candidate); } catch (e) {
+          console.debug("[ui] JSON partial parse failed", e);
+          return null;
+        }
+      }
+
+      function renderStructuredAnswer(obj) {
+        if (!obj || !Array.isArray(obj.sections)) return null;
+        const sections = obj.sections;
+
+        const splitQuoteAndExplanation = (text) => {
+          if (!text) return null;
+          const t = String(text);
+          const markerRe = /(适用说明|说明|解释|适用要点|适用边界|注意事项|Applicable|Explanation|Analysis|Reasoning)\s*[:：]?/i;
+          const prefixRe = /^(引用条文|条文|引用|Quote|Provision|Article)\s*[:：]\s*/i;
+          let qStart = 0;
+          let startMatch = t.match(prefixRe);
+          if (startMatch) {
+            qStart = startMatch[0].length;
+          } else {
+            const idx = t.search(/(引用条文|条文|引用|Quote|Provision)\s*[:：]/i);
+            if (idx >= 0) {
+              const m = t.slice(idx).match(/(引用条文|条文|引用|Quote|Provision)\s*[:：]\s*/i);
+              qStart = idx + (m ? m[0].length : 0);
+            } else if (!t.startsWith("第")) {
+              return null;
+            }
+          }
+          let qEnd = -1;
+          let rest = "";
+          const markerIdx = t.slice(qStart).search(markerRe);
+          if (markerIdx >= 0) {
+            qEnd = qStart + markerIdx;
+            rest = t.slice(qEnd).trim();
+          } else {
+            const nl = t.indexOf("\n", qStart);
+            if (nl > qStart + 6) {
+              qEnd = nl;
+              rest = t.slice(nl + 1).trim();
+            } else {
+              return null;
+            }
+          }
+          let quote = t.slice(qStart, qEnd).trim();
+          quote = quote.replace(/^[：:\s]+/, "");
+          if (!quote) return null;
+          rest = rest.replace(/^\s+/, "");
+          return { quote, rest };
+        };
+
+        const renderItemText = (item) => {
+          if (item == null) return "";
+          if (typeof item === "string" || typeof item === "number") return String(item);
+          if (typeof item === "object") {
+            if ("law_name" in item || "article_no" in item || "summary" in item) {
+              const law = String(item.law_name || "").trim();
+              const art = String(item.article_no || "").trim();
+              const summary = String(item.summary || "").trim();
+              const label = [law, art].filter(Boolean).join(" · ");
+              return summary ? `${label}: ${summary}` : label;
+            }
+            const t = item.text ?? item.content ?? item.value ?? item.title;
+            if (typeof t === "string" || typeof t === "number") return String(t);
+            try { return JSON.stringify(item); } catch (e) { return String(item); }
+          }
+          return String(item);
+        };
+
+        const renderItemHtml = (item) => {
+          if (item && typeof item === "object" && ("quote" in item || "explanation" in item)) {
+            const quote = String(item.quote || "").trim().replace(/\n{2,}/g, "\n");
+            const explanation = String(item.explanation || "").trim().replace(/\n{2,}/g, "\n").replace(/^\s+/, "");
+            const quoteText = quote ? `“${quote}”` : "";
+            const quoteHtml = quoteText ? `<span class="quote">${escapeHtml(quoteText)}</span>` : "";
+            if (quoteHtml && explanation) {
+              return `${quoteHtml} ${escapeHtml(explanation).replace(/^\n+/, "")}`;
+            }
+            if (quoteHtml) return quoteHtml;
+            return escapeHtml(explanation).replace(/^\n+/, "");
+          }
+          const raw = String(renderItemText(item)).replace(/\n{2,}/g, "\n");
+          const split = splitQuoteAndExplanation(raw);
+          if (!split) return escapeHtml(raw);
+          const quoteText = `“${split.quote}”`;
+          const quoteHtml = `<span class="quote">${escapeHtml(quoteText)}</span>`;
+          if (split.rest) {
+            return `${quoteHtml}${escapeHtml(split.rest).replace(/^\s+/, "")}`;
+          }
+          return quoteHtml;
+        };
+
+        const secHtml = sections.map((s) => {
+          const title = escapeHtml(String(s.title || ""));
+          const items = Array.isArray(s.items) ? s.items : (s.items ? [s.items] : []);
+          const listClass = items.length === 1 ? "sec-list single" : "sec-list";
+          const list = items.length
+            ? `<ol class="${listClass}">${items.map((it) => `<li>${renderItemHtml(it)}</li>`).join("")}</ol>`
+            : "";
+          return `<div class="sec"><div class="sec-title">${title}</div>${list}</div>`;
+        }).join("");
+
+        return secHtml;
+      }
+
+      function renderStreamingPlaceholder() {
+        const msg = translations[currentLang]?.generating || "Generating…";
+        return `<div class="sec"><div class="sec-title">${escapeHtml(msg)}</div></div>`;
+      }
+
 
       function scrollChatToBottom() {
         chatList.scrollTop = chatList.scrollHeight;
@@ -873,9 +1073,9 @@
 
           const sum = document.createElement("summary");
           sum.className = "evi-sum";
+          const label = [h.law_name, h.article].filter(Boolean).join(" · ") || "条文";
           sum.innerHTML = `
-            <span class="evi-left">[${escapeHtml(h.rank)}] ${escapeHtml(h.article || "条文")}</span>
-            <span class="evi-right">score&nbsp;${escapeHtml(h.score.toFixed(2))}</span>
+            <span class="evi-left">[${escapeHtml(h.rank)}] ${escapeHtml(label)}</span>
           `;
 
           const body = document.createElement("div");
@@ -938,6 +1138,23 @@
         return { error: "timeout" };
       }
 
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function fetchWithWarmupRetry(
+        url,
+        options,
+        { maxWaitMs = 300000, delayMs = 1000 } = {}
+      ) {
+        const start = Date.now();
+        while (true) {
+          const res = await fetch(url, options);
+          if (res.ok || res.status !== 503) return res;
+          await res.text().catch(() => "");
+          if (Date.now() - start > maxWaitMs) return res;
+          await sleep(delayMs);
+        }
+      }
+
       async function callAnswer(retrieval_id, opts = {}) {
         const payload = { retrieval_id, stream: true };
         let tokenCount = 0;
@@ -947,7 +1164,7 @@
         if (!k) k = getOpenAIKey();
         if (k) headers["X-OpenAI-Api-Key"] = k;
 
-        const res = await fetch("/rag/answer", {
+        const res = await fetchWithWarmupRetry("/rag/answer", {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -959,6 +1176,9 @@
         }
 
         const onToken = typeof opts.onToken === "function" ? opts.onToken : null;
+        const onSection = typeof opts.onSection === "function" ? opts.onSection : null;
+        const onItem = typeof opts.onItem === "function" ? opts.onItem : null;
+        const onSentence = typeof opts.onSentence === "function" ? opts.onSentence : null;
         const onError = typeof opts.onError === "function" ? opts.onError : null;
         const onDone = typeof opts.onDone === "function" ? opts.onDone : null;
 
@@ -998,6 +1218,13 @@
               // }
               if (t && onToken) onToken(t);
 
+            } else if (eventType === "section") {
+              if (onSection) onSection(dataObj);
+            } else if (eventType === "item") {
+              if (onItem) onItem(dataObj);
+            } else if (eventType === "sentence") {
+              if (onSentence) onSentence(dataObj);
+
             } else if (eventType === "error") {
               const payload = dataObj || { kind: "server_error", message: dataStr };
               if (onError) onError(payload);
@@ -1021,7 +1248,7 @@
         if (!k) k = getOpenAIKey();
         if (k) headers["X-OpenAI-Api-Key"] = k;
 
-        const res = await fetch("/rag/retrieve", {
+        const res = await fetchWithWarmupRetry("/rag/retrieve", {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -1159,13 +1386,81 @@
           // Streaming answer: create assistant bubble first, then append incrementally
           const contentEl = addAssistantPlaceholder();
           let acc = "";
+          let lastStructured = "";
+          let hasStructured = false;
+          let sections = [];
+          let sentenceBuckets = {};
 
           await callAnswer(r.retrieval_id, {
             onToken: (t) => {
               acc += t;
-              const display = smartParagraphForDisplay(acc);
-              setBubbleContentText(contentEl, display);
+              const parsed = tryParseJsonPartial(acc);
+              const structuredHtml = renderStructuredAnswer(parsed);
+              if (structuredHtml) {
+                lastStructured = structuredHtml;
+                hasStructured = true;
+                setBubbleContentHtml(contentEl, structuredHtml);
+              } else if (hasStructured) {
+                setBubbleContentHtml(contentEl, lastStructured);
+              } else {
+                setBubbleContentHtml(contentEl, renderStreamingPlaceholder());
+              }
               scrollChatToBottom();
+            },
+            onSection: (payload) => {
+              if (payload && payload.section) {
+                const idx = Number(payload.index);
+                if (!Number.isNaN(idx) && idx >= 0) {
+                  sections[idx] = payload.section;
+                  const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+                  if (html) {
+                    setBubbleContentHtml(contentEl, html);
+                    hasStructured = true;
+                    lastStructured = html;
+                  }
+                }
+              }
+            },
+            onItem: (payload) => {
+              if (!payload) return;
+              const sIdx = Number(payload.section_index);
+              const iIdx = Number(payload.item_index);
+              if (Number.isNaN(sIdx) || sIdx < 0 || Number.isNaN(iIdx) || iIdx < 0) return;
+              const item = payload.item;
+              if (!sections[sIdx]) {
+                sections[sIdx] = { title: "", items: [] };
+              }
+              if (!Array.isArray(sections[sIdx].items)) {
+                sections[sIdx].items = [];
+              }
+              sections[sIdx].items[iIdx] = item;
+              const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+              if (html) {
+                setBubbleContentHtml(contentEl, html);
+                hasStructured = true;
+                lastStructured = html;
+              }
+            },
+            onSentence: (payload) => {
+              if (!payload) return;
+              const sIdx = Number(payload.section_index);
+              const iIdx = Number(payload.item_index);
+              const tIdx = Number(payload.sentence_index);
+              if (Number.isNaN(sIdx) || sIdx < 0 || Number.isNaN(iIdx) || iIdx < 0 || Number.isNaN(tIdx) || tIdx < 0) return;
+              const sentence = payload.sentence || "";
+              const key = `${sIdx}:${iIdx}`;
+              if (!sentenceBuckets[key]) sentenceBuckets[key] = [];
+              sentenceBuckets[key][tIdx] = sentence;
+              if (!sections[sIdx]) sections[sIdx] = { title: "", items: [] };
+              if (!Array.isArray(sections[sIdx].items)) sections[sIdx].items = [];
+              const merged = sentenceBuckets[key].filter(Boolean).join("");
+              sections[sIdx].items[iIdx] = merged;
+              const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+              if (html) {
+                setBubbleContentHtml(contentEl, html);
+                hasStructured = true;
+                lastStructured = html;
+              }
             },
             onError: (e) => {
               const kind = e && e.kind ? String(e.kind) : "server_error";
@@ -1180,9 +1475,14 @@
               evidenceHint.style.display = "none";
             },
             onDone: () => {
-              // final render: preserve model's original paragraphs
-              // const finalText = (acc || "").trim() || "（未返回答案）";
-              // setBubbleContentText(contentEl, finalText);
+              const finalText = (acc || "").trim();
+              const parsed = tryParseJson(finalText) || tryParseJsonPartial(finalText);
+              const structuredHtml = renderStructuredAnswer(parsed);
+              if (structuredHtml) {
+                setBubbleContentHtml(contentEl, structuredHtml);
+              } else {
+                setBubbleContentText(contentEl, finalText || "（未返回答案）");
+              }
               evidenceHint.style.display = "none";
               state.hasAsked = true;
             }

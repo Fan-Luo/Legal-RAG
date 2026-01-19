@@ -151,6 +151,7 @@ class RagPipeline:
                 # 中文
                 return (
                     f"[候选条文 {i}]\n"
+                    f"法律名称：{(getattr(c, 'law_name', '') or '')}\n"
                     f"章节：{(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
                     f"条号：{getattr(c, 'article_id', '') or ''}\n"
                     f"内容：{(getattr(c, 'text', '') or '').strip()}\n"
@@ -159,6 +160,7 @@ class RagPipeline:
                 # 英文
                 return (
                     f"[Candidate Provision {i}]\n"
+                    f"Law Name: {(getattr(c, 'law_name', '') or '')}\n"
                     f"Chapter/Section: {(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
                     f"Article: {getattr(c, 'article_id', '') or ''}\n"
                     f"Text: {(getattr(c, 'text', '') or '').strip()}\n"
@@ -198,6 +200,9 @@ class RagPipeline:
             task_type=task_key,
             issue_type=issue_key,
         )
+        if one_example:
+            # Escape braces so str.format doesn't treat JSON examples as placeholders.
+            one_example = one_example.replace("{", "{{").replace("}", "}}")
 
         # Compile user message
         user_compiled = "\n\n".join([s for s in [_user_prefix, _user_suffix, one_example] if s.strip()])
@@ -252,10 +257,10 @@ class RagPipeline:
         # logger.info("[answer_from_hits] messages=%s", messages)
 
         try:
-            raw = llm.chat(messages=messages)
+            raw = llm.chat(messages=messages, tag="answer")
         except TypeError:
             # If client only supports prompt
-            raw = llm.chat(prompt=self._messages_to_prompt(messages))
+            raw = llm.chat(prompt=self._messages_to_prompt(messages), tag="answer")
 
         return RagAnswer(question=question, answer=_trim_to_answer(raw), hits=hits)
 
