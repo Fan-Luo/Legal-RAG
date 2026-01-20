@@ -68,7 +68,7 @@ class LegalIssueExtractor:
             f"issue_type must be one of: {[e.value for e in IssueType]}."
         )
         user = {"question": question, "heuristic": base.model_dump()}
-        text = str(llm.chat(messages=[{"role": "system", "content": sys}, {"role": "user", "content": str(user)}]))
+        text = str(llm.chat(messages=[{"role": "system", "content": sys}, {"role": "user", "content": str(user)}], tag="issue_refine"))
 
         import json
         obj = json.loads(_extract_json(text))

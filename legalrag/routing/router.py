@@ -214,7 +214,8 @@ class QueryRouter:
                 messages=[
                     {"role": "system", "content": sys},
                     {"role": "user", "content": str(user)},
-                ]
+                ],
+                tag="route_llm",
             )
         )
 

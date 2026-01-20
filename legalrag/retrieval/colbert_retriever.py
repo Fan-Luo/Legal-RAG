@@ -48,6 +48,7 @@ class ColBERTRetriever:
         self._pid2chunk: Dict[int, LawChunk] = {}
         self._collection: List[str] = []
         self._searcher = None
+        self._meta_mtime: float | None = None
 
         if not self.enabled:
             return
@@ -62,6 +63,9 @@ class ColBERTRetriever:
                 f"ColBERT meta file not found: {self.meta_file}. "
                 "Run build_colbert_index() first."
             )
+        meta_mtime = self.meta_file.stat().st_mtime
+        if self._meta_mtime is not None and self._meta_mtime == meta_mtime:
+            return
 
         pid2chunk: Dict[int, LawChunk] = {}
         max_pid = -1
@@ -87,6 +91,7 @@ class ColBERTRetriever:
 
         self._pid2chunk = pid2chunk
         self._collection = collection
+        self._meta_mtime = meta_mtime
 
     def _init_searcher(self) -> None:
         from colbert import Searcher
@@ -100,6 +105,8 @@ class ColBERTRetriever:
             return []
         if not self._searcher:
             raise RuntimeError("ColBERT Searcher is not initialized.")
+
+        self._load_meta_and_collection()
 
         query = (query or "").strip()
         if not query:

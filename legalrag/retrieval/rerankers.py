@@ -165,7 +165,7 @@ class LLMReranker:
             {"role": "system", "content": LLM_RERANK_SYSTEM_PROMPT},
             {"role": "user", "content": build_llm_rerank_prompt(q, d)},
         ]
-        return str(self.llm.chat(messages=messages))
+        return str(self.llm.chat(messages=messages, tag="rerank_llm"))
 
     def score(self, query: str, doc: str) -> float:
         text = self._call_llm(query, doc)
@@ -215,7 +215,7 @@ class AsyncLLMReranker:
                 {"role": "system", "content": LLM_RERANK_SYSTEM_PROMPT},
                 {"role": "user", "content": build_llm_rerank_prompt(query, doc)},
             ]
-            return str(await self.llm.achat(messages=messages))
+            return str(await self.llm.achat(messages=messages, tag="rerank_llm"))
 
         # fallback: run sync in executor
         loop = asyncio.get_running_loop()
@@ -341,4 +341,3 @@ def rerank_candidates(
 
     results.sort(key=lambda x: x[1].norm_score, reverse=True)
     return results[:top_n]
-

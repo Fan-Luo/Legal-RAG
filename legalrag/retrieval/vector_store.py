@@ -61,16 +61,25 @@ class VectorStore:
         # self.model.eval()
         self.index: faiss.Index | None = None  
         self.chunks: List[LawChunk] = []
+        self._index_mtime: float | None = None
+        self._meta_mtime: float | None = None
 
     def load(self):
         """
         加载 FAISS HNSW 索引 + 元数据 JSONL → LawChunk 列表。
         """
-        if self.index is not None and self.chunks:
-            return
-
         if not self.index_path.exists() or not self.meta_path.exists():
             raise FileNotFoundError("FAISS 索引或元数据不存在，请先运行 scripts.build_index.")
+
+        index_mtime = self.index_path.stat().st_mtime
+        meta_mtime = self.meta_path.stat().st_mtime
+        if (
+            self.index is not None
+            and self.chunks
+            and self._index_mtime == index_mtime
+            and self._meta_mtime == meta_mtime
+        ):
+            return
 
         self.index = faiss.read_index(str(self.index_path))
 
@@ -87,6 +96,8 @@ class VectorStore:
                     obj = json.loads(line)
                     self.chunks.append(LawChunk.model_validate(obj))  
 
+        self._index_mtime = index_mtime
+        self._meta_mtime = meta_mtime
         # logger.info(f"[FAISS] Loaded {len(self.chunks)} chunks, index type: {type(self.index)}")
 
     def _embed(self, texts: List[str], is_query: bool = False) -> np.ndarray:

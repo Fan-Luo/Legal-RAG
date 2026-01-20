@@ -12,6 +12,11 @@ from openai import OpenAI, OpenAIError
 
 from legalrag.config import AppConfig
 from legalrag.utils.logger import get_logger
+try:
+    from legalrag.llm.context import get_request_id  # type: ignore
+except Exception:
+    def get_request_id() -> str:
+        return ""
 from typing import AsyncIterator
 from transformers import TextIteratorStreamer
 import threading
@@ -109,7 +114,10 @@ class LLMClient(BaseModel):
             temperature=getattr(llm_cfg, "temperature", 0.3),
             top_p=getattr(llm_cfg, "top_p", 0.9),
         )
-        logger.info(f"[LLM] override init provider={inst.provider} model_name={inst.model_name!r} env_OPENAI_MODEL={os.getenv('OPENAI_MODEL','')!r}")
+        logger.info(
+            f"[LLM] override init provider={inst.provider} model_name={inst.model_name!r} "
+            f"env_OPENAI_MODEL={os.getenv('OPENAI_MODEL','')!r} rid={get_request_id() or '-'}"
+        )
         inst._init_backend(llm_cfg, override_openai_key=openai_key)
         cls._instances_by_key[key] = inst
         return inst
@@ -121,15 +129,16 @@ class LLMClient(BaseModel):
             base_url = os.getenv(llm_cfg.base_url_env, None)
 
             if not api_key:
-                logger.warning("[LLM] No OpenAI API key available.")
+                logger.warning("[LLM] No OpenAI API key available. rid=%s", get_request_id() or "-")
                 self.client = None
             else:
                 self.client = OpenAI(api_key=api_key, base_url=base_url)
                 logger.info(
-                    "[LLM] Using OpenAI: model=%s, base_url=%s, key_source=%s",
+                    "[LLM] Using OpenAI: model=%s, base_url=%s, key_source=%s, rid=%s",
                     self.model_name,
                     base_url or "default",
                     "user" if override_openai_key else "env",
+                    get_request_id() or "-",
                 )
         elif self.provider == "qwen-local":
             model_path = self.model_name
@@ -173,7 +182,7 @@ class LLMClient(BaseModel):
     # -----------------------
     # 同步接口（支持 prompt 或 messages）
     # -----------------------
-    def chat(self, prompt: str | None = None, messages: List[Dict[str, str]] | None = None) -> str:
+    def chat(self, prompt: str | None = None, messages: List[Dict[str, str]] | None = None, *, tag: str = "") -> str:
         """
         同步生成回答。
         - 兼容旧用法：chat(prompt="...")
@@ -189,7 +198,12 @@ class LLMClient(BaseModel):
                 prompt = prompt or ""
                 # logger.info(f"[chat]: {prompt}" )
             if self.provider == "openai":
-                logger.info(f"[LLM] OpenAI request model={self.model_name!r}")
+                logger.info(
+                    "[LLM] OpenAI request model=%r tag=%s rid=%s",
+                    self.model_name,
+                    tag or "default",
+                    get_request_id() or "-",
+                )
                 if not self.model_name:
                     raise ValueError("OpenAI model is empty. Set OPENAI_MODEL or configure cfg.llm.model.")
                 out = self._chat_openai_messages(messages)
@@ -258,9 +272,10 @@ class LLMClient(BaseModel):
                             kwargs["top_p"] = self.top_p
 
                     logger.info(
-                        "[LLM] OpenAI request model=%r kwargs_keys=%s",
+                        "[LLM] OpenAI request model=%r kwargs_keys=%s rid=%s",
                         self.model_name,
                         sorted(kwargs.keys()),
+                        get_request_id() or "-",
                     )
 
                     resp = self.client.chat.completions.create(**kwargs)
@@ -363,7 +378,7 @@ class LLMClient(BaseModel):
             if self.client is None:
                 yield "【错误】OpenAI API Key 未配置"
                 return
-            logger.info(f"[chat_stream] openai 模型")
+            logger.info(f"[chat_stream] openai 模型 rid={get_request_id() or '-'}")
             try:
                 kwargs = {
                     "model": self.model_name,

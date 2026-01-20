@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 import traceback
+import time
 from legalrag.config import AppConfig
 from legalrag.schemas import RetrievalHit
 
@@ -11,6 +12,10 @@ from legalrag.retrieval.dense_retriever import DenseRetriever
 from legalrag.retrieval.graph_retriever import GraphRetriever
 from legalrag.retrieval.colbert_retriever import ColBERTRetriever
 from legalrag.retrieval.rerankers import RerankerFactory, rerank_candidates
+import torch
+from legalrag.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # -----------------------
@@ -278,38 +283,50 @@ class HybridRetriever:
         rcfg = self.cfg.retrieval
         top_k = max(1, int(top_k))
 
+        has_gpu = torch.cuda.is_available() and torch.cuda.device_count() > 0
+        t_start = time.time()
+
         eff_top_k = int(getattr(rcfg, "top_k", top_k * 8) or (top_k * 8))
         if eff_top_k < top_k:
             eff_top_k = top_k
 
         # retrieve per channel (oversampled)
+        t0 = time.time()
         dense_hits = self.search_dense(question, eff_top_k)
+        t1 = time.time()
         bm25_hits = self.search_bm25(question, eff_top_k)
+        t2 = time.time()
         colbert_hits = self.search_colbert(question, eff_top_k)
+        t3 = time.time()
 
         fused = self._fuse(
             dense_hits=dense_hits,
             bm25_hits=bm25_hits,
             colbert_hits=colbert_hits 
         )
+        t4 = time.time()
 
         min_final = float(getattr(rcfg, "min_final_score", 0.0))
         fused = [h for h in fused if float(h.score) >= min_final]
 
         graph_hits: List[RetrievalHit] = []
+        t_graph = None
         mode = getattr(decision, "mode", None)
         if getattr(rcfg, "enable_graph", False) and mode and ( (str(mode).upper().endswith("GRAPH_AUGMENTED") or str(mode) == "RoutingMode.GRAPH_AUGMENTED")):
             seed_n = int(getattr(rcfg, "graph_seed_k", max(10, top_k * 3)))
             seeds = fused[:seed_n]
             graph_hits = self.search_graph(question, eff_top_k, decision=decision, seeds=seeds)
             fused = seeds + graph_hits
+            t_graph = time.time()
 
         # optional rerank
+        t_rerank = None
         if getattr(rcfg, "enable_rerank", False):
 
             # 1) CrossEncoder / LLM 
+            use_llm_rerank = bool(getattr(rcfg, "rerank_use_llm", False))
             factory = RerankerFactory( 
-                llm=llm, 
+                llm=llm if use_llm_rerank else None, 
                 cross_model=rcfg.rerank_ce_model,
                 llm_threshold=30, 
                 use_cache=True, 
@@ -336,9 +353,34 @@ class HybridRetriever:
                 fused.sort(key=lambda x: float(x.score), reverse=True)
                 for i, h in enumerate(fused, start=1):
                     h.rank = i
+            t_rerank = time.time()
 
         # defensive dedup  
         fused = _dedup_keep_best(fused)
+        t_end = time.time()
+        ms = lambda a, b: int((b - a) * 1000)
+        dense_ms = ms(t0, t1)
+        bm25_ms = ms(t1, t2)
+        colbert_ms = ms(t2, t3)
+        fuse_ms = ms(t3, t4)
+        graph_ms = ms(t4, t_graph) if t_graph else 0
+        rerank_ms = ms((t_graph or t4), t_rerank) if t_rerank else 0
+        total_ms = ms(t_start, t_end)
+        graph_enabled = bool(getattr(rcfg, "enable_graph", False))
+        colbert_enabled = self.colbert is not None
+        logger.info(
+            "[retrieval] dense=%dms bm25=%dms colbert=%dms fuse=%dms graph=%dms rerank=%dms total=%dms enabled(graph=%s,colbert=%s, has_gpu=%s)",
+            dense_ms,
+            bm25_ms,
+            colbert_ms,
+            fuse_ms,
+            graph_ms,
+            rerank_ms,
+            total_ms,
+            int(graph_enabled),
+            int(colbert_enabled), 
+            int(has_gpu),
+        )
         return fused[:top_k]
 
     # -----------------------

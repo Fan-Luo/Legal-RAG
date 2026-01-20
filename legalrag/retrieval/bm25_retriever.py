@@ -25,17 +25,19 @@ class BM25Retriever:
         self.bm25_path = Path(rcfg.bm25_index_file)
 
         self._loaded = False
+        self._bm25_mtime: float | None = None
         self.bm25: BM25Okapi | None = None
         self.chunks: List[LawChunk] = []
 
     def load(self) -> None:
-        if self._loaded:
-            return
         if not self.bm25_path.exists():
             raise RuntimeError(
                 f"[BM25] index not found: {self.bm25_path}. "
                 f"Run: python build_index.py (or python build_index.py --only-bm25)"
             )
+        current_mtime = self.bm25_path.stat().st_mtime
+        if self._loaded and self._bm25_mtime == current_mtime:
+            return
 
         with self.bm25_path.open("rb") as f:
             obj = pickle.load(f)
@@ -61,6 +63,7 @@ class BM25Retriever:
         self.bm25 = bm25
         self.chunks = chunks
         self._loaded = True
+        self._bm25_mtime = current_mtime
         logger.info("[BM25] loaded index with %d chunks", len(self.chunks))
 
     def search(self, query: str, top_k: int) -> List[Tuple[LawChunk, float]]:
