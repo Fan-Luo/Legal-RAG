@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os, subprocess, uuid
 import re
 from pathlib import Path
@@ -26,6 +27,7 @@ from legalrag.routing.router import RoutingDecision
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
+logging.getLogger("uvicorn.access").addFilter(lambda r: "/ready" not in r.getMessage())
 
 app = FastAPI(title="Legal-RAG API", version="0.2.0")
 
@@ -34,6 +36,7 @@ pipeline: Optional[RagPipeline] = None
 ingest_service: IngestService | None = None
 
 PIPELINE_READY = False
+PIPELINE_WARMUP_DONE = False
 PIPELINE_ERROR: Optional[str] = None
 RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "").strip()
 
@@ -110,6 +113,7 @@ def ready():
     # Readiness: informational (can be false while warming up).
     return {
         "ready": bool(PIPELINE_READY),
+        "warmup_done": bool(PIPELINE_WARMUP_DONE),
         "error": PIPELINE_ERROR,
         "has_gpu": detect_gpu(),
         "provider": getattr(getattr(CFG, "llm", None), "provider", None),
@@ -194,8 +198,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 def build_pipeline_sync():
     """Build pipeline in a thread."""
-    global CFG, pipeline, PIPELINE_READY, PIPELINE_ERROR, ingest_service
+    global CFG, pipeline, PIPELINE_READY, PIPELINE_WARMUP_DONE, PIPELINE_ERROR, ingest_service
     PIPELINE_READY = False
+    PIPELINE_WARMUP_DONE = False
     PIPELINE_ERROR = None
     
     try:
@@ -219,6 +224,7 @@ def build_pipeline_sync():
         logger.exception("[API] RAG Pipeline 初始化失败")
 
 def _warmup_pipeline():
+    global PIPELINE_WARMUP_DONE
     logger.info("[warmup] started")
     if not PIPELINE_READY or pipeline is None:
         logger.info("[warmup] skip: pipeline not ready")
@@ -237,6 +243,7 @@ def _warmup_pipeline():
     except Exception:
         logger.exception("[warmup] retrieval failed")
     finally:
+        PIPELINE_WARMUP_DONE = True
         logger.info("[warmup] done")
 
 @app.on_event("startup")
@@ -248,7 +255,7 @@ async def startup_event():
         for p in ["/", "/health", "/ui/", "/ui/index.html"]:
             try:
                 r = requests.get(f"http://127.0.0.1:{port}{p}", timeout=2)
-                logger.info(f"[selfcheck] GET {p} -> {r.status_code}")
+                # logger.info(f"[selfcheck] GET {p} -> {r.status_code}")
             except Exception as e:
                 logger.error(f"[selfcheck] GET {p} failed: {e}")
 
@@ -455,6 +462,7 @@ async def rag_answer(body: dict, request: Request):
             )
 
     llm_override = _llm_override_from_request(request)
+    llm = llm_override or getattr(pipeline, "llm", None)
 
     # -----------------------------
     # 返回JSON
@@ -463,7 +471,7 @@ async def rag_answer(body: dict, request: Request):
         try:
             logger.info(f"answer_from_hits")
             ans = pipeline.answer_from_hits(
-                question, hits, decision=decision, llm=llm_override
+                question, hits, decision=decision, llm=llm
             )
             answer_text = _get(ans, "answer", "") or _get(ans, "text", "")
             out_hits = _get(ans, "hits", []) or hits or []
@@ -659,7 +667,7 @@ async def rag_answer(body: dict, request: Request):
                 sent_sentences: Dict[Tuple[int, int], int] = {}
                 # 实时 token 流式输出
                 async for chunk in stream_fn(
-                    question, hits, decision=decision, llm_override=llm_override
+                    question, hits, decision=decision, llm_override=llm
                 ):
                     now = time.time()
                     if now - last_ping > 1.0:
@@ -733,7 +741,7 @@ async def rag_answer(body: dict, request: Request):
                 # fallback：先生成完整答案，再手动分块发送
                 final_text = "" 
                 final_ans = pipeline.answer_from_hits(
-                    question, hits, decision=decision, llm=llm_override
+                    question, hits, decision=decision, llm=llm
                 )
                 final_text = _get(final_ans, "answer", "") or _get(final_ans, "text", "") or ""
 
