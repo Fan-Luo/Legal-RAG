@@ -295,6 +295,8 @@ class RerankerFactory:
         self.llm_threshold = llm_threshold
         self.use_cache = use_cache
         self._cache = {}
+        if not hasattr(self.__class__, "_cross_cache"):
+            self.__class__._cross_cache = {}
 
     def create(self, top_k: int):
         if self.llm is not None and top_k <= self.llm_threshold:
@@ -302,7 +304,12 @@ class RerankerFactory:
                 return CachedLLMReranker(llm=self.llm, cache=self._cache)
             return LLMReranker(llm=self.llm)
 
-        return CrossEncoderReranker(model_name=self.cross_model)
+        cache: Dict[str, CrossEncoderReranker] = getattr(self.__class__, "_cross_cache")
+        if self.cross_model in cache:
+            return cache[self.cross_model]
+        reranker = CrossEncoderReranker(model_name=self.cross_model)
+        cache[self.cross_model] = reranker
+        return reranker
 
 
 # ---------------------------

@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 class IncrementalDenseBuilder:
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
-        self.vs = VectorStore(cfg)
+        self.vs = VectorStore.from_config(cfg)
 
     def _load_jsonl_chunks(self, jsonl_path: Path) -> List[LawChunk]:
         chunks: List[LawChunk] = []
