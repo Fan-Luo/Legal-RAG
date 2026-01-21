@@ -221,7 +221,7 @@
         padding-left: 0;
         margin-left: 18px;
       }
-      .quote{
+      .quotation{
         display: block;
         color: #475569;
         font-style: italic;
@@ -451,7 +451,7 @@
 
         .card {
           min-height: auto;          /* 确保卡片能撑开 */
-          overflow: visible;         /* 防止内容被隐藏 */
+          overflow: auto;          
         }
 
         .card-body {
@@ -628,6 +628,11 @@
           uploadPdfOnly: "Only PDF files are supported.",
           uploadFailed: "Upload failed:",
           uploading: "Uploading:",
+          uploaded: "Uploaded",
+          docId: "Document ID",
+          chunks: "Chunks",
+          preview: "Preview",
+          indexingInProcess: "Indexing in progress.",
           maxSize: "Max 10MB",
           upload: "Upload",
           clearUpload: "Clear",
@@ -663,6 +668,11 @@
           uploadPdfOnly: "仅支持 PDF 文件",
           uploadFailed: "上传失败：",
           uploading: "正在上传：",
+          uploaded: "已上传",
+          docId: "文档 ID",
+          chunks: "切分数量",
+          preview: "预览",
+          indexingInProcess: "索引进行中",
           maxSize: "最大 10MB",
           upload: "上传",
           clearUpload: "清除",
@@ -896,19 +906,19 @@
         if (!obj || !Array.isArray(obj.sections)) return null;
         const sections = obj.sections;
 
-        const splitQuoteAndExplanation = (text) => {
+        const splitquotationAndExplanation = (text) => {
           if (!text) return null;
           const t = String(text);
           const markerRe = /(适用说明|说明|解释|适用要点|适用边界|注意事项|Applicable|Explanation|Analysis|Reasoning)\s*[:：]?/i;
-          const prefixRe = /^(引用条文|条文|引用|Quote|Provision|Article)\s*[:：]\s*/i;
+          const prefixRe = /^(引用条文|条文|引用|quotation|Provision|Article)\s*[:：]\s*/i;
           let qStart = 0;
           let startMatch = t.match(prefixRe);
           if (startMatch) {
             qStart = startMatch[0].length;
           } else {
-            const idx = t.search(/(引用条文|条文|引用|Quote|Provision)\s*[:：]/i);
+            const idx = t.search(/(引用条文|条文|引用|quotation|Provision)\s*[:：]/i);
             if (idx >= 0) {
-              const m = t.slice(idx).match(/(引用条文|条文|引用|Quote|Provision)\s*[:：]\s*/i);
+              const m = t.slice(idx).match(/(引用条文|条文|引用|quotation|Provision)\s*[:：]\s*/i);
               qStart = idx + (m ? m[0].length : 0);
             } else if (!t.startsWith("第")) {
               return null;
@@ -929,11 +939,11 @@
               return null;
             }
           }
-          let quote = t.slice(qStart, qEnd).trim();
-          quote = quote.replace(/^[：:\s]+/, "");
-          if (!quote) return null;
+          let quotation = t.slice(qStart, qEnd).trim();
+          quotation = quotation.replace(/^[：:\s]+/, "");
+          if (!quotation) return null;
           rest = rest.replace(/^\s+/, "");
-          return { quote, rest };
+          return { quotation, rest };
         };
 
         const renderItemText = (item) => {
@@ -955,26 +965,35 @@
         };
 
         const renderItemHtml = (item) => {
-          if (item && typeof item === "object" && ("quote" in item || "explanation" in item)) {
-            const quote = String(item.quote || "").trim().replace(/\n{2,}/g, "\n");
-            const explanation = String(item.explanation || "").trim().replace(/\n{2,}/g, "\n").replace(/^\s+/, "");
-            const quoteText = quote ? `“${quote}”` : "";
-            const quoteHtml = quoteText ? `<span class="quote">${escapeHtml(quoteText)}</span>` : "";
-            if (quoteHtml && explanation) {
-              return `${quoteHtml} ${escapeHtml(explanation).replace(/^\n+/, "")}`;
+          if (item && typeof item === "object" && ("quotation" in item || "explanation" in item)) {
+            let quotationText = "";
+            if (item.quotation && typeof item.quotation === "object") {
+              const law = String(item.quotation.law_name || "").trim();
+              const art = String(item.quotation.article_no || "").trim();
+              const content = String(item.quotation.content || "").trim();
+              const contentHasArt = art && content.includes(art);
+              const label = [law, contentHasArt ? "" : art].filter(Boolean).join(" · ");
+              quotationText = content ? (label ? `${label}: ${content}` : content) : label;
+            } else {
+              quotationText = String(item.quotation || "").trim().replace(/\n{2,}/g, "\n");
             }
-            if (quoteHtml) return quoteHtml;
+            const explanation = String(item.explanation || "").trim().replace(/\n{2,}/g, "\n").replace(/^\s+/, "");
+            const quotationHtml = quotationText ? `<span class="quotation">${escapeHtml(`“${quotationText}”`)}</span>` : "";
+            if (quotationHtml && explanation) {
+              return `${quotationHtml} ${escapeHtml(explanation).replace(/^\n+/, "")}`;
+            }
+            if (quotationHtml) return quotationHtml;
             return escapeHtml(explanation).replace(/^\n+/, "");
           }
           const raw = String(renderItemText(item)).replace(/\n{2,}/g, "\n");
-          const split = splitQuoteAndExplanation(raw);
+          const split = splitquotationAndExplanation(raw);
           if (!split) return escapeHtml(raw);
-          const quoteText = `“${split.quote}”`;
-          const quoteHtml = `<span class="quote">${escapeHtml(quoteText)}</span>`;
+          const quotationText = `“${split.quotation}”`;
+          const quotationHtml = `<span class="quotation">${escapeHtml(quotationText)}</span>`;
           if (split.rest) {
-            return `${quoteHtml}${escapeHtml(split.rest).replace(/^\s+/, "")}`;
+            return `${quotationHtml}${escapeHtml(split.rest).replace(/^\s+/, "")}`;
           }
-          return quoteHtml;
+          return quotationHtml;
         };
 
         const secHtml = sections.map((s) => {
