@@ -48,7 +48,7 @@ cache/
 # Generated data
 data/processed
 data/index
-data/graph
+data/graph/*.jsonl
 data/uploads
 datasets
 

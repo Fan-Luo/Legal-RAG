@@ -1,0 +1,4 @@
+---
+title: " "
+---
+<meta http-equiv="refresh" content="0; url=https://huggingface.co/spaces/flora-l/Legal-RAG" />
