@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
+from legalrag.utils.lang import detect_lang
 from legalrag.utils.logger import get_logger
-import re
 
 logger = get_logger(__name__)
 
@@ -52,14 +52,21 @@ def normalize_article_no(s: str) -> str:
 
 
 # ---- Headings (can be "第三编", "第一分编", "第一章", "第一节"; may include wide spaces) ----
-PART_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*编(?P<title>.*)$")
-SUBPART_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*分编(?P<title>.*)$")
-CHAPTER_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*章(?P<title>.*)$")
-SECTION_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*节(?P<title>.*)$")
+PART_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*编(?P<title>.*)$", re.M)
+SUBPART_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*分编(?P<title>.*)$", re.M)
+CHAPTER_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*章(?P<title>.*)$", re.M)
+SECTION_RE = re.compile(rf"^\s*(?:第\s*)?(?P<num>{CN_NUM})\s*节(?P<title>.*)$", re.M)
+INLINE_HEADING_RE = re.compile(rf"(?:第\s*)?(?P<num>{CN_NUM})\s*(?:分编|编|章|节)\s*.+$")
 
 # ---- Article (supports: 第463条 / 第四百六十三条 / 第四百六十三条...) ----
 ARTICLE_LINE_RE = re.compile(rf"^\s*第\s*(?P<num>{CN_NUM})\s*条(?P<rest>.*)$")
 ARTICLE_LINE_NO_DAI_RE = re.compile(rf"^\s*(?P<num>{CN_NUM})\s*条(?P<rest>.*)$")
+
+# ---- UCC Section (English) ----
+EN_SECTION_LINE_RE = re.compile(r"^\s*§\s*(?P<id>[0-9A-Za-z-]+)\.?\s*(?P<rest>.*)$")
+EN_SECTION_SCAN_RE = re.compile(r"(?m)^\s*§\s*(?P<id>[0-9A-Za-z-]+)\.")
+EN_ARTICLE_RE = re.compile(r"^\s*ARTICLE\s+(?P<num>[0-9A-Za-z-]+)\s*[-–—]\s*(?P<title>.*)$", re.IGNORECASE)
+EN_PART_RE = re.compile(r"^\s*PART\s+(?P<num>[0-9A-Za-z-]+)\.?\s*(?P<title>.*)$", re.IGNORECASE)
 
 # ---- Fallback: scan the whole text, do not require line-start headings ----
 # Trigger on newline boundary OR start-of-text; tolerate spaces and optional "第"
@@ -138,6 +145,50 @@ def _heading(kind: str, num: str, title: str) -> str:
     title = _clean_line(title)
     return f"{num}{kind} {title}".strip() if title else f"{num}{kind}"
 
+def _collect_heading_positions(text: str) -> Dict[str, List[Tuple[int, str]]]:
+    positions: Dict[str, List[Tuple[int, str]]] = {
+        "part": [],
+        "subpart": [],
+        "chapter": [],
+        "section": [],
+    }
+    for m in PART_RE.finditer(text):
+        positions["part"].append((m.start(), _heading("编", m.group("num"), m.group("title"))))
+    for m in SUBPART_RE.finditer(text):
+        positions["subpart"].append((m.start(), _heading("分编", m.group("num"), m.group("title"))))
+    for m in CHAPTER_RE.finditer(text):
+        positions["chapter"].append((m.start(), _heading("章", m.group("num"), m.group("title"))))
+    for m in SECTION_RE.finditer(text):
+        positions["section"].append((m.start(), _heading("节", m.group("num"), m.group("title"))))
+    return positions
+
+def _last_heading_before(items: List[Tuple[int, str]], pos: int) -> str:
+    last = ""
+    for p, val in items:
+        if p <= pos:
+            last = val
+        else:
+            break
+    return last
+
+def _strip_heading_lines(lines: List[str]) -> List[str]:
+    out: List[str] = []
+    for raw in lines:
+        line = _clean_line(raw)
+        if not line:
+            out.append(raw)
+            continue
+        if PART_RE.match(line) or SUBPART_RE.match(line) or CHAPTER_RE.match(line) or SECTION_RE.match(line):
+            continue
+        inline = INLINE_HEADING_RE.search(line)
+        if inline:
+            prefix = line[:inline.start()].strip()
+            if prefix:
+                out.append(prefix)
+            continue
+        out.append(line)
+    return out
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -154,6 +205,7 @@ def _write_jsonl(path: Path, records: List[Dict]) -> None:
 class State:
     law_name: str
     source: str
+    lang: str
     part: str = ""
     subpart: str = ""
     chapter: str = ""
@@ -179,6 +231,7 @@ def _finalize(st: State, out: List[Dict]) -> None:
         {
             "id": rec_id,
             "law_name": st.law_name,
+            "lang": st.lang,
             "part": st.part,
             "subpart": st.subpart,
             "chapter": st.chapter,
@@ -194,9 +247,78 @@ def _finalize(st: State, out: List[Dict]) -> None:
     st.cur_no = None
     st.cur_lines = []
 
+def _finalize_en(st: State, out: List[Dict]) -> None:
+    if not st.cur_no:
+        return
+    text = _merge_lines(st.cur_lines)
+    if not text:
+        return
+
+    article_key = st.cur_key or st.cur_no
+    rec_id = f"{st.source}::{article_key}"
+
+    out.append(
+        {
+            "id": rec_id,
+            "law_name": st.law_name,
+            "lang": st.lang,
+            "part": st.part,
+            "subpart": st.subpart,
+            "chapter": st.chapter,
+            "section": st.section,
+            "article_no": st.cur_no,
+            "article_key": article_key,
+            "article_id": article_key,
+            "text": text,
+            "source": st.source,
+        }
+    )
+    st.cur_key = None
+    st.cur_no = None
+    st.cur_lines = []
+
+def parse_english_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
+    st = State(law_name=law_name, source=source, lang="en")
+    records: List[Dict] = []
+
+    for raw in text.splitlines():
+        line = _clean_line(raw)
+        if not line:
+            if st.cur_no:
+                st.cur_lines.append("")
+            continue
+
+        m = EN_ARTICLE_RE.match(line)
+        if m:
+            st.chapter = _heading("Article", m.group("num"), m.group("title"))
+            st.section = ""
+            continue
+
+        m = EN_PART_RE.match(line)
+        if m:
+            st.section = _heading("Part", m.group("num"), m.group("title"))
+            continue
+
+        m = EN_SECTION_LINE_RE.match(line)
+        if m:
+            _finalize_en(st, records)
+            key = _clean_line(m.group("id"))
+            st.cur_key = key
+            st.cur_no = f"§ {key}"
+            st.cur_lines = [line]
+            continue
+
+        if st.cur_no:
+            st.cur_lines.append(line)
+
+    _finalize_en(st, records)
+    return records
+
 def parse_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
+    if detect_lang(text) == "en":
+        return parse_english_by_lines(text, source=source, law_name=law_name)
     text = _normalize_article_markers(text)
-    st = State(law_name=law_name, source=source)
+    st = State(law_name=law_name, source=source, lang=detect_lang(text))
     records: List[Dict] = []
 
     for raw in text.splitlines():
@@ -209,6 +331,8 @@ def parse_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
         # headings
         m = PART_RE.match(line)
         if m and not ARTICLE_LINE_RE.match(line):
+            if st.cur_no:
+                _finalize(st, records)
             st.part = _heading("编", m.group("num"), m.group("title"))
             st.subpart = ""
             st.chapter = ""
@@ -217,6 +341,8 @@ def parse_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
 
         m = SUBPART_RE.match(line)
         if m and not ARTICLE_LINE_RE.match(line):
+            if st.cur_no:
+                _finalize(st, records)
             st.subpart = _heading("分编", m.group("num"), m.group("title"))
             st.chapter = ""
             st.section = ""
@@ -224,12 +350,16 @@ def parse_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
 
         m = CHAPTER_RE.match(line)
         if m and not ARTICLE_LINE_RE.match(line):
+            if st.cur_no:
+                _finalize(st, records)
             st.chapter = _heading("章", m.group("num"), m.group("title"))
             st.section = ""
             continue
 
         m = SECTION_RE.match(line)
         if m and not ARTICLE_LINE_RE.match(line):
+            if st.cur_no:
+                _finalize(st, records)
             st.section = _heading("节", m.group("num"), m.group("title"))
             continue
 
@@ -258,13 +388,52 @@ def parse_by_lines(text: str, source: str, law_name: str) -> List[Dict]:
     _finalize(st, records)
     return records
 
+def parse_english_by_scan_fallback(text: str, source: str, law_name: str) -> List[Dict]:
+    matches = list(EN_SECTION_SCAN_RE.finditer(text))
+    matches = sorted(matches, key=lambda m: m.start())
+    if not matches:
+        return []
+
+    records: List[Dict] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        segment = text[start:end].strip()
+
+        key = _clean_line(m.group("id"))
+        article_no = f"§ {key}"
+        rec_id = f"{source}::{key}"
+
+        seg_text = _merge_lines(segment.splitlines())
+
+        records.append(
+            {
+                "id": rec_id,
+                "law_name": law_name,
+                "lang": "en",
+                "part": "",
+                "subpart": "",
+                "chapter": "",
+                "section": "",
+                "article_no": article_no,
+                "article_key": key,
+                "article_id": key,
+                "text": seg_text,
+                "source": source,
+            }
+        )
+    return records
+
 def parse_by_scan_fallback(text: str, source: str, law_name: str) -> List[Dict]:
     """
     Fallback when the input is not cleanly line-broken (common with PDF copy-paste).
     We scan the whole text for article markers and slice segments between them.
-    Headings are not reliably recoverable in fallback mode, so we keep them blank.
     """
+    if detect_lang(text) == "en":
+        return parse_english_by_scan_fallback(text, source=source, law_name=law_name)
     text = _normalize_article_markers(text)
+    lang = detect_lang(text)
+    heading_pos = _collect_heading_positions(text)
     matches = list(ARTICLE_SCAN_RE.finditer(text)) + list(ARTICLE_SCAN_NO_DAI_RE.finditer(text))
     matches = sorted(matches, key=lambda m: m.start())
     matches = [m for m in matches if not _is_citation_start(text, m.start())]
@@ -281,16 +450,22 @@ def parse_by_scan_fallback(text: str, source: str, law_name: str) -> List[Dict]:
         article_no = f"第{key}条"
         rec_id = f"{source}::{key}"
 
-        seg_text = _merge_lines(segment.splitlines())
+        seg_lines = _strip_heading_lines(segment.splitlines())
+        seg_text = _merge_lines(seg_lines)
+        part = _last_heading_before(heading_pos["part"], start)
+        subpart = _last_heading_before(heading_pos["subpart"], start)
+        chapter = _last_heading_before(heading_pos["chapter"], start)
+        section = _last_heading_before(heading_pos["section"], start)
 
         records.append(
             {
                 "id": rec_id,
                 "law_name": law_name,
-                "part": "",
-                "subpart": "",
-                "chapter": "",
-                "section": "",
+                "lang": lang,
+                "part": part,
+                "subpart": subpart,
+                "chapter": chapter,
+                "section": section,
                 "article_no": article_no,
                 "article_key": key,
                 "article_id":  normalize_article_no(article_no) ,
@@ -317,9 +492,9 @@ def main() -> int:
     cfg = AppConfig.load(None)
 
     raw_dir = Path(cfg.paths.raw_dir)
-    out_path = Path(cfg.paths.law_jsonl)
+    out_root = Path(cfg.paths.processed_dir)
 
-    txt_files = sorted(raw_dir.glob("*.txt"))
+    txt_files = sorted(raw_dir.rglob("*.txt"))
     logger.info(f"Raw dir: {raw_dir.resolve()}")
     logger.info(f"Found txt files: {[p.name for p in txt_files]}")
 
@@ -333,8 +508,10 @@ def main() -> int:
         text = _read_text(p)
         logger.info(f"File size: {len(text)} chars")
 
-        recs_line = parse_by_lines(text, source=p.name, law_name="中华人民共和国民法典")
-        recs_scan = parse_by_scan_fallback(text, source=p.name, law_name="中华人民共和国民法典")
+        lang = detect_lang(text)
+        law_name = "Uniform Commercial Code" if lang == "en" else "中华人民共和国民法典"
+        recs_line = parse_by_lines(text, source=p.name, law_name=law_name)
+        recs_scan = parse_by_scan_fallback(text, source=p.name, law_name=law_name)
         if recs_scan and (len(recs_line) < 10 or len(recs_scan) > len(recs_line)):
             logger.warning(
                 "Switching to scan fallback (line=%d scan=%d).",
@@ -348,9 +525,21 @@ def main() -> int:
         logger.info(f"Parsed records from {p.name}: {len(recs)}")
         all_records.extend(recs)
 
-    logger.info(f"Total records: {len(all_records)}")
-    _write_jsonl(out_path, all_records)
-    logger.info(f"Saved JSONL to {out_path}")
+    by_lang: Dict[str, List[Dict]] = {"zh": [], "en": []}
+    for r in all_records:
+        r_lang = str(r.get("lang") or "zh").strip().lower()
+        if r_lang not in by_lang:
+            by_lang[r_lang] = []
+        by_lang[r_lang].append(r)
+
+    total = sum(len(v) for v in by_lang.values())
+    logger.info(f"Total records: {total}")
+    for lang_key, recs in by_lang.items():
+        if not recs:
+            continue
+        out_path = out_root / f"law_{lang_key}.jsonl"
+        _write_jsonl(out_path, recs)
+        logger.info("Saved %d records to %s", len(recs), out_path)
     return 0
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from typing import Iterable, List, Optional, Tuple, Dict, Any
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
 from legalrag.pdf.parser import extract_text_from_pdf, extract_docling_blocks
+from legalrag.utils.lang import detect_lang
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,6 +92,21 @@ def _shorten_title(title: str, max_len: int = 20) -> str:
     if len(title) <= max_len:
         return title
     return f"{title[:10]}***{title[-10:]}"
+
+
+_TITLE_HEADING_RE = re.compile(
+    r"^\s*("
+    r"(第[一二三四五六七八九十百千万〇零0-9]+(编|分编|章|节|条))"
+    r"|((ARTICLE|PART)\s+[0-9A-Za-z-]+)"
+    r")"
+)
+
+
+def _is_heading_like_title(title: str) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    return bool(_TITLE_HEADING_RE.match(t))
 
 
 CN_NUM = r"[一二三四五六七八九十百千万〇零0-9]+"
@@ -350,7 +366,7 @@ class PDFIngestor:
         suffix = Path(file.filename or "upload.pdf").suffix or ".pdf"
         orig_name = (file.filename or "upload.pdf")
         short_name = _short_name(Path(orig_name).stem)
-        display_name = f"PDF:{short_name}"
+        display_name = f"{short_name}"
         tmp_path: Path | None = None
 
         try:
@@ -412,8 +428,10 @@ class PDFIngestor:
         stem = Path(source_name).stem
         if not _has_zh_or_en(stem):
             title = _extract_title_from_text(raw_text)
-            display_name = _shorten_title(title)
+            if not _is_heading_like_title(title):
+                display_name = _shorten_title(title)
 
+        doc_lang = detect_lang(norm_text)
         logger.info(f"[Ingest] doc_id={doc_id} source={source_name} text_len={len(norm_text)}")
 
         chunks: List[LawChunk] = []
@@ -458,6 +476,7 @@ class PDFIngestor:
                             article_no=str(rec.get("article_no") or ""),
                             article_id=str(rec.get("article_id") or ""),
                             text=str(rec.get("text") or ""),
+                            lang=doc_lang,
                             source=str(rec.get("source") or source_name),
                             start_char=None,
                             end_char=None,
@@ -486,6 +505,7 @@ class PDFIngestor:
                             article_no=article_label,
                             article_id=article_label,
                             text=c_text,
+                            lang=doc_lang,
                             source=str(source_name),
                             start_char=int(para_s + c_s),
                             end_char=int(para_s + c_e),
