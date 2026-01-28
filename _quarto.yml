@@ -1,0 +1,49 @@
+project:
+  type: website
+  output-dir: _site
+  resources:
+    - notebooks
+    - docs
+    - ui
+    - data/graph
+
+website:
+  title: "Legal RAG"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: docs/demo.qmd
+        text: Demo
+      - href: notebooks/01_Launch_the_UI.ipynb
+        text: UI
+      - href: notebooks/02_LegalRAG_Pipeline.ipynb
+        text: Run
+      - href: notebooks/03_Retrieval_Performance_Evaluation.ipynb
+        text: Evaluation
+      - href: notebooks/04_Law_Graph_Visualization.ipynb
+        text: LawGraph
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true         
+    code-tools: 
+      source: true   # Explicitly enables the "Source Code" tool
+      toggle: true   # Adds the "Show All Code" toggle button
+    code-overflow: wrap  # Wraps long code lines instead of scrolling
+    highlight-style: github
+    smooth-scroll: false
+    self-contained: true
+    embed-resources: true
+    css: ui/quarto_styles.css
+    number-sections: true
+    number-depth: 2
+    include-after-body:
+      - ui/quarto_code_tools.html
+execute:
+  output: true     # Retain all outputs (tables/figures/prints)
+  warning: false   # Suppress warnings
+  message: false   # Suppress messages (e.g., package startup)
+  error: true      # Display errors for debugging
