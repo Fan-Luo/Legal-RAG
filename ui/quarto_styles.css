@@ -1,0 +1,73 @@
+
+pre, code {
+  white-space: pre-wrap !important;   /* 保留换行 + 自动折行 */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Jupyter cell output */
+.cell-output pre {
+  white-space: pre-wrap !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Notebook markdown output: tone down blockquote/list sizes */
+.cell-output-markdown blockquote,
+.cell-output-markdown blockquote p,
+.cell-output-markdown ul,
+.cell-output-markdown ul li {
+  font-size: 0.9em;
+}
+
+.cell-output-markdown p > strong {
+  font-size: 0.9em;
+}
+
+.cell-output-markdown blockquote {
+  border-left: none;
+  padding-left: 0;
+  margin-left: 0;
+  margin-top: 0.1em;
+  margin-bottom: 0.1em;
+}
+
+.cell-output-markdown blockquote + blockquote {
+  margin-top: 0.1em;
+}
+
+/* DataFrame / HTML 表格中的长文本 */
+table td {
+  word-break: break-word;
+  white-space: normal;
+}
+
+/* Markdown tables match body text size */
+table.table td,
+table.table th {
+  font-size: 0.9em;
+}
+
+/* 把 code 折叠块视觉降权*/
+details.code-fold {
+  margin: 0.8em 0 1.2em 0;
+  /*border-left: 3px solid #e5e7eb;    很浅 */
+  padding-left: 0.1em;
+}
+
+details.code-fold > summary {
+  color: black;       /*  灰 */
+  font-size: 1em;
+  cursor: pointer;
+}
+
+details.code-fold[open] {
+  background: #fafafa;
+}
+
+/* Indent folded code blocks and outputs */
+details.code-fold pre,
+details.code-fold .sourceCode,
+.cell-output {
+  margin-left: 1em;
+}

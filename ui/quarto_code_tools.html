@@ -1,0 +1,27 @@
+<script>
+window.addEventListener("DOMContentLoaded", () => {
+  const showBtn = document.getElementById("quarto-show-all-code");
+  const hideBtn = document.getElementById("quarto-hide-all-code");
+  if (!showBtn || !hideBtn) return;
+
+  const setAll = (open) => {
+    document.querySelectorAll("details.code-fold").forEach((d) => {
+      if (open) d.setAttribute("open", "");
+      else d.removeAttribute("open");
+    });
+  };
+
+  // override Quarto's buggy handler
+  showBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    setAll(true);
+  }, true);
+
+  hideBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    setAll(false);
+  }, true);
+});
+</script>
