@@ -70,7 +70,7 @@ class GraphRetriever:
         if self.graph is None:
             self.graph = LawGraphStore(self.cfg)
         if self.store is None:
-            self.store = VectorStore(self.cfg)
+            self.store = VectorStore.from_config(self.cfg)
 
         # Load vector store & build id2chunk
         self.store.load()

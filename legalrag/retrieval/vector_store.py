@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import ClassVar, Dict, List, Tuple
 
 import faiss
 import numpy as np
@@ -63,6 +63,24 @@ class VectorStore:
         self.chunks: List[LawChunk] = []
         self._index_mtime: float | None = None
         self._meta_mtime: float | None = None
+
+    _instances_by_key: ClassVar[Dict[Tuple[str, str, str, str], "VectorStore"]] = {}
+
+    @classmethod
+    def from_config(cls, cfg: AppConfig) -> "VectorStore":
+        rcfg = cfg.retrieval
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        key = (
+            str(rcfg.embedding_model),
+            str(rcfg.faiss_index_file),
+            str(rcfg.faiss_meta_file),
+            device,
+        )
+        if key in cls._instances_by_key:
+            return cls._instances_by_key[key]
+        inst = cls(cfg)
+        cls._instances_by_key[key] = inst
+        return inst
 
     def load(self):
         """

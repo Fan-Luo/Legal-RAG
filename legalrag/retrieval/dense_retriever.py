@@ -30,7 +30,7 @@ class DenseRetriever:
 
     def __post_init__(self) -> None:
         if self.store is None:
-            self.store = VectorStore(self.cfg)
+            self.store = VectorStore.from_config(self.cfg)
 
     def search(self, query: str, top_k: int) -> List[RetrievalHit]:
         assert self.store is not None

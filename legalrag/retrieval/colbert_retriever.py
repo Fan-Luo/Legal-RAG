@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import ClassVar, Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
@@ -56,6 +56,27 @@ class ColBERTRetriever:
         _ensure_colbert_importable()
         self._load_meta_and_collection()
         self._init_searcher()
+
+    _instances_by_key: ClassVar[
+        Dict[Tuple[str, str, str, str, str, int], "ColBERTRetriever"]
+    ] = {}
+
+    @classmethod
+    def from_config(cls, cfg: AppConfig) -> "ColBERTRetriever":
+        rcfg = cfg.retrieval
+        key = (
+            str(getattr(rcfg, "colbert_index_path")),
+            str(getattr(rcfg, "colbert_index_name")),
+            str(getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0")),
+            str(getattr(rcfg, "colbert_meta_file", "index/colbert/colbert_meta.jsonl")),
+            str(getattr(rcfg, "colbert_experiment")),
+            int(getattr(rcfg, "colbert_nranks", 1)),
+        )
+        if key in cls._instances_by_key:
+            return cls._instances_by_key[key]
+        inst = cls(cfg)
+        cls._instances_by_key[key] = inst
+        return inst
 
     def _load_meta_and_collection(self) -> None:
         if not self.meta_file.exists():
@@ -112,7 +133,29 @@ class ColBERTRetriever:
         if not query:
             return []
 
-        results = self._searcher.search(query, k=top_k)
+        try:
+            results = self._searcher.search(query, k=top_k)
+        except Exception as exc:
+            try:
+                import torch
+            except Exception:
+                torch = None
+            if torch is not None and isinstance(exc, torch.cuda.OutOfMemoryError):
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                return []
+            msg = str(exc).lower()
+            if "out of memory" in msg:
+                try:
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                return []
+            raise
         pids, ranks, scores = results  # pids are ints (passage ids)
 
         out: List[Tuple[LawChunk, float]] = []

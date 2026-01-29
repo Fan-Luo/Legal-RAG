@@ -10,8 +10,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && pip install --no-cache-dir huggingface_hub==0.36.0
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 WORKDIR /app/data

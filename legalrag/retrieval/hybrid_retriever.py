@@ -162,7 +162,7 @@ class HybridRetriever:
         self.colbert = None
         if getattr(self.cfg.retrieval, "enable_colbert", False) and ColBERTRetriever is not None:
             try:
-                self.colbert = ColBERTRetriever(self.cfg)
+                self.colbert = ColBERTRetriever.from_config(self.cfg)
             except Exception as e:
                 print("[HybridRetriever] ColBERT init failed:", repr(e))
                 traceback.print_exc()
