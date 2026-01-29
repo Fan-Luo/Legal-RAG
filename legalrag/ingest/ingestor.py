@@ -11,6 +11,7 @@ from typing import Iterable, List, Optional, Tuple, Dict, Any
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
 from legalrag.pdf.parser import extract_text_from_pdf, extract_docling_blocks
+from legalrag.utils.lang import detect_lang
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -414,6 +415,7 @@ class PDFIngestor:
             title = _extract_title_from_text(raw_text)
             display_name = _shorten_title(title)
 
+        doc_lang = detect_lang(norm_text)
         logger.info(f"[Ingest] doc_id={doc_id} source={source_name} text_len={len(norm_text)}")
 
         chunks: List[LawChunk] = []
@@ -458,6 +460,7 @@ class PDFIngestor:
                             article_no=str(rec.get("article_no") or ""),
                             article_id=str(rec.get("article_id") or ""),
                             text=str(rec.get("text") or ""),
+                            lang=doc_lang,
                             source=str(rec.get("source") or source_name),
                             start_char=None,
                             end_char=None,
@@ -486,6 +489,7 @@ class PDFIngestor:
                             article_no=article_label,
                             article_id=article_label,
                             text=c_text,
+                            lang=doc_lang,
                             source=str(source_name),
                             start_char=int(para_s + c_s),
                             end_char=int(para_s + c_e),

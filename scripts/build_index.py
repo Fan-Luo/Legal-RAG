@@ -76,32 +76,47 @@ def main() -> None:
     chunks = load_chunks_from_dir(rcfg.processed_dir, rcfg.processed_glob)
     logger.info("Loaded %d law chunks from %s/%s", len(chunks), rcfg.processed_dir, rcfg.processed_glob)
 
-    if args.only_colbert:
-        build_colbert_index(cfg, chunks)
+    by_lang = {}
+    for c in chunks:
+        lang = (getattr(c, "lang", None) or "zh").strip().lower()
+        by_lang.setdefault(lang, []).append(c)
+
+    if not by_lang:
+        logger.error("No chunks found to index.")
         return
 
-    if args.only_faiss:
-        build_faiss_index(cfg, chunks)
-        return
+    for lang, lang_chunks in sorted(by_lang.items()):
+        lang_cfg = cfg.with_lang(lang)
+        logger.info("Building indexes for lang=%s (chunks=%d)", lang, len(lang_chunks))
 
-    if args.only_bm25:
-        build_bm25_index(cfg, chunks)
-        return
+        if args.only_colbert:
+            build_colbert_index(lang_cfg, lang_chunks)
+            continue
 
-    if not args.no_faiss:
-        build_faiss_index(cfg, chunks)
-    if not args.no_bm25:
-        build_bm25_index(cfg, chunks)
-    if not args.no_colbert:
-        try:
-            build_colbert_index(cfg, chunks)
-        except Exception as e:
-            print(f"⚠️ Warning: ColBERT index build failed, continuing without it.\nReason: {e}")
+        if args.only_faiss:
+            build_faiss_index(lang_cfg, lang_chunks)
+            continue
+
+        if args.only_bm25:
+            build_bm25_index(lang_cfg, lang_chunks)
+            continue
+
+        if not args.no_faiss:
+            build_faiss_index(lang_cfg, lang_chunks)
+        if not args.no_bm25:
+            build_bm25_index(lang_cfg, lang_chunks)
+        if not args.no_colbert:
+            try:
+                build_colbert_index(lang_cfg, lang_chunks)
+            except Exception as e:
+                print(f"⚠️ Warning: ColBERT index build failed for lang={lang}, continuing without it.\nReason: {e}")
 
     if idx_version and args.activate:
         from legalrag.index.registry import IndexRegistry
-        registry = IndexRegistry(Path(cfg.paths.index_dir))
-        registry.activate(idx_version)
+        for lang in sorted(by_lang.keys()):
+            lang_cfg = cfg.with_lang(lang)
+            registry = IndexRegistry(Path(lang_cfg.paths.index_dir))
+            registry.activate(idx_version)
 
 if __name__ == "__main__":
     main()

@@ -93,7 +93,7 @@ def build_colbert_index(
     model_name: Optional[str] = getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0") 
     index_path: Path = Path(str(getattr(rcfg, "colbert_index_path")))
     index_name: str = str(getattr(rcfg, "colbert_index_name"))
-    meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "index/colbert/colbert_meta.jsonl")))
+    meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file")))
     nbits: int = int(getattr(rcfg, "colbert_nbits", 4))
     doc_maxlen: int = int(getattr(rcfg, "colbert_doc_maxlen", 220))
     kmeans_niters: int = int(getattr(rcfg, "colbert_kmeans_niters", 10))

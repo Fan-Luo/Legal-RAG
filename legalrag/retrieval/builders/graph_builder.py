@@ -10,24 +10,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
 from legalrag.utils.logger import get_logger
+from legalrag.utils.lang import detect_lang
 
 logger = get_logger(__name__)
-
-# -----------------------
-# Language detection 
-# -----------------------
-_RE_ZH = re.compile(r"[\u4e00-\u9fff]")
-_RE_EN = re.compile(r"[A-Za-z]")
-
-
-def detect_lang(text: str) -> str:
-    """Return 'zh' or 'en' (best-effort)."""
-    if not text:
-        return "zh"
-    zh = len(_RE_ZH.findall(text))
-    en = len(_RE_EN.findall(text))
-    return "en" if en > zh else "zh"
-
 
 # -----------------------
 # ZH parsers
@@ -468,6 +453,7 @@ class GraphBuilder:
                     "neighbors": adj.get(aid, []),
                     "meta": {
                         "defines_terms": def2terms.get(aid, []),
+                        "lang": getattr(c, "lang", None),
                     },
                 }
                 f.write(json.dumps(node, ensure_ascii=False) + "\n")
