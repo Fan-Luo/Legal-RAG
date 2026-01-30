@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Optional, Dict
+import copy
 import os
 from pydantic import BaseModel, Field
 
@@ -21,8 +22,8 @@ class PathsConfig(BaseModel):
     graph_dir: str = str(DATA_DIR / "graph")
 
     law_raw: str = str(DATA_DIR / "raw" / "minfadian_hetongbian.txt")
-    law_jsonl: str = str(DATA_DIR / "processed" / "law.jsonl")
-    law_graph_jsonl: str = str(DATA_DIR / "graph" / "law_graph.jsonl")
+    law_jsonl: str = str(DATA_DIR / "processed" / "law_zh.jsonl")
+    law_graph_jsonl: str = str(DATA_DIR / "graph" / "law_graph_zh.jsonl")
     legal_kg_jsonl: str = str(DATA_DIR / "graph" / "legal_kg.jsonl")
 
 
@@ -52,7 +53,7 @@ class LLMConfig(BaseModel):
 
 class RetrievalConfig(BaseModel):
     # -------- Corpus --------
-    processed_file: str = "processed/law.jsonl"
+    processed_file: str = "processed/law_zh.jsonl"
     processed_dir: str = "data/processed"
     processed_glob: str = "*.jsonl"
 
@@ -60,6 +61,8 @@ class RetrievalConfig(BaseModel):
     faiss_index_file: str = "index/faiss/faiss.index"
     faiss_meta_file: str = "index/faiss/faiss_meta.jsonl"
     embedding_model: str = "BAAI/bge-base-zh-v1.5"  # BAAI/bge-m3
+    embedding_model_zh: str = "BAAI/bge-base-zh-v1.5"
+    embedding_model_en: str = "BAAI/bge-base-en-v1.5"
 
     hnsw_m: int = 64
     hnsw_ef_construction: int = 400
@@ -96,6 +99,8 @@ class RetrievalConfig(BaseModel):
     colbert_meta_file: str = "index/colbert/colbert_meta.jsonl"
     colbert_weight: float = 0.35
     colbert_index_name: str = "law"
+    colbert_index_name_zh: str = "law_zh"
+    colbert_index_name_en: str = "law_en"
     colbert_model_name: str = "jinaai/jina-colbert-v2" # "colbert-ir/colbertv2.0"  
     colbert_experiment: str =  "experiment"  
     colbert_nranks: int = 1
@@ -150,6 +155,64 @@ class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     routing: RoutingConfig = RoutingConfig()
 
+    @staticmethod
+    def _lang_paths(data_dir: Path, lang: str) -> tuple[Path, Path, Path, Path, Path]:
+        lang_key = (lang or "zh").strip().lower()
+        processed_dir = data_dir / "processed"
+        law_jsonl = processed_dir / f"law_{lang_key}.jsonl"
+        graph_dir = data_dir / "graph"
+        graph_jsonl = graph_dir / f"law_graph_{lang_key}.jsonl"
+        index_root = data_dir / "index" / lang_key
+        return processed_dir, law_jsonl, graph_dir, graph_jsonl, index_root
+
+    @staticmethod
+    def _resolve_index_dir(index_root: Path, index_version: Optional[str]) -> tuple["IndexRegistry", Path]:
+        from legalrag.index.registry import IndexRegistry
+
+        registry = IndexRegistry(index_root)
+        if index_version:
+            active_index_dir = registry.ensure_version_dir(index_version)
+        else:
+            active_index_dir = registry.active_index_dir()
+        return registry, active_index_dir
+
+    @staticmethod
+    def _apply_index_paths(
+        cfg: "AppConfig",
+        *,
+        processed_dir: Path,
+        law_jsonl: Path,
+        graph_dir: Path,
+        graph_jsonl: Path,
+        index_root: Path,
+        registry: "IndexRegistry",
+        active_index_dir: Path,
+    ) -> None:
+        cfg.paths.processed_dir = str(processed_dir)
+        cfg.paths.law_jsonl = str(law_jsonl)
+        cfg.paths.graph_dir = str(graph_dir)
+        cfg.paths.law_graph_jsonl = str(graph_jsonl)
+        cfg.paths.index_dir = str(index_root)
+
+        r = cfg.retrieval
+        r.processed_dir = str(processed_dir)
+        r.processed_file = str(law_jsonl)
+        r.faiss_index_file = str(active_index_dir / "faiss" / "faiss.index")
+        r.faiss_meta_file = str(active_index_dir / "faiss" / "faiss_meta.jsonl")
+        r.bm25_index_file = str(active_index_dir / "bm25.pkl")
+        r.colbert_index_path = str(active_index_dir / "colbert")
+        r.colbert_meta_file = str(active_index_dir / "colbert" / "colbert_meta.jsonl")
+
+        Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        graph_dir.mkdir(parents=True, exist_ok=True)
+        index_root.mkdir(parents=True, exist_ok=True)
+        registry.versions_dir().mkdir(parents=True, exist_ok=True)
+        active_index_dir.mkdir(parents=True, exist_ok=True)
+        Path(cfg.retrieval.colbert_index_path).mkdir(parents=True, exist_ok=True)
+        Path(cfg.paths.eval_dir).mkdir(parents=True, exist_ok=True)
+        Path(cfg.paths.upload_dir).mkdir(parents=True, exist_ok=True)
+
     @classmethod
     def load(cls, config_file: Optional[str] = None, index_version: Optional[str] = None) -> "AppConfig":
         if config_file:
@@ -164,35 +227,48 @@ class AppConfig(BaseModel):
         cfg = cls()
 
         data_dir = Path(cfg.paths.data_dir)
-        index_root = Path(cfg.paths.index_dir)
-
-        def abs_path(rel: str) -> str:
-            return str(data_dir / rel)
-
-        from legalrag.index.registry import IndexRegistry
-        registry = IndexRegistry(index_root)
+        processed_dir, law_jsonl, graph_dir, graph_jsonl, index_root = cls._lang_paths(data_dir, "zh")
         requested_version = (index_version or os.getenv("LEGALRAG_INDEX_VERSION", "").strip()) or None
-        if requested_version:
-            active_index_dir = registry.ensure_version_dir(requested_version)
+        registry, active_index_dir = cls._resolve_index_dir(index_root, requested_version)
+        cls._apply_index_paths(
+            cfg,
+            processed_dir=processed_dir,
+            law_jsonl=law_jsonl,
+            graph_dir=graph_dir,
+            graph_jsonl=graph_jsonl,
+            index_root=index_root,
+            registry=registry,
+            active_index_dir=active_index_dir,
+        )
+        cfg.retrieval.embedding_model = cfg.retrieval.embedding_model_zh
+        cfg.retrieval.colbert_index_name = cfg.retrieval.colbert_index_name_zh
+
+        return cfg
+
+    def with_lang(self, lang: str) -> "AppConfig":
+        """
+        Return a copy of config with language-specific corpus/index paths.
+        """
+        cfg = self.model_copy(deep=True) if hasattr(self, "model_copy") else copy.deepcopy(self)
+        data_dir = Path(cfg.paths.data_dir)
+        processed_dir, law_jsonl, graph_dir, graph_jsonl, index_root = self._lang_paths(data_dir, lang)
+        index_version = os.getenv("LEGALRAG_INDEX_VERSION", "").strip() or None
+        registry, active_index_dir = self._resolve_index_dir(index_root, index_version)
+        self._apply_index_paths(
+            cfg,
+            processed_dir=processed_dir,
+            law_jsonl=law_jsonl,
+            graph_dir=graph_dir,
+            graph_jsonl=graph_jsonl,
+            index_root=index_root,
+            registry=registry,
+            active_index_dir=active_index_dir,
+        )
+        lang_key = (lang or "zh").strip().lower()
+        if lang_key == "en":
+            cfg.retrieval.embedding_model = cfg.retrieval.embedding_model_en
+            cfg.retrieval.colbert_index_name = cfg.retrieval.colbert_index_name_en
         else:
-            active_index_dir = registry.active_index_dir()
-
-        r = cfg.retrieval
-        r.processed_file = abs_path(r.processed_file)
-        r.faiss_index_file = str(active_index_dir / "faiss" / "faiss.index")
-        r.faiss_meta_file = str(active_index_dir / "faiss" / "faiss_meta.jsonl")
-        r.bm25_index_file = str(active_index_dir / "bm25.pkl")
-        r.colbert_index_path = str(active_index_dir / "colbert")
-        r.colbert_meta_file = str(active_index_dir / "colbert" / "colbert_meta.jsonl")
-
-        Path(cfg.paths.raw_dir).mkdir(parents=True, exist_ok=True)
-        Path(cfg.paths.processed_dir).mkdir(parents=True, exist_ok=True)
-        index_root.mkdir(parents=True, exist_ok=True)
-        registry.versions_dir().mkdir(parents=True, exist_ok=True)
-        active_index_dir.mkdir(parents=True, exist_ok=True)
-        Path(cfg.retrieval.colbert_index_path).mkdir(parents=True, exist_ok=True)
-        Path(cfg.paths.eval_dir).mkdir(parents=True, exist_ok=True)
-        Path(cfg.paths.upload_dir).mkdir(parents=True, exist_ok=True)
-        Path(cfg.paths.graph_dir).mkdir(parents=True, exist_ok=True)
-
+            cfg.retrieval.embedding_model = cfg.retrieval.embedding_model_zh
+            cfg.retrieval.colbert_index_name = cfg.retrieval.colbert_index_name_zh
         return cfg

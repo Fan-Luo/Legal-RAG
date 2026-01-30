@@ -6,7 +6,8 @@ from typing import ClassVar, Dict, List, Optional, Tuple
 
 from legalrag.config import AppConfig
 from legalrag.schemas import LawChunk
-
+from colbert import Searcher
+from colbert.infra import Run, RunConfig
 
 def _ensure_colbert_importable() -> None:
     try:
@@ -41,7 +42,7 @@ class ColBERTRetriever:
         self.index_path: Path = Path(str(getattr(rcfg, "colbert_index_path")))
         self.index_name: str = str(getattr(rcfg, "colbert_index_name"))
         self.model_name: Optional[str] = getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0")   
-        self.meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file", "index/colbert/colbert_meta.jsonl")))
+        self.meta_file: Path = Path(str(getattr(rcfg, "colbert_meta_file")))
         self.experiment: str = str(getattr(rcfg, "colbert_experiment"))
         self.nranks: int = int(getattr(rcfg, "colbert_nranks", 1))
 
@@ -60,6 +61,7 @@ class ColBERTRetriever:
     _instances_by_key: ClassVar[
         Dict[Tuple[str, str, str, str, str, int], "ColBERTRetriever"]
     ] = {}
+    _searcher_cache: ClassVar[Dict[Tuple[str, str, str, str, int], object]] = {}
 
     @classmethod
     def from_config(cls, cfg: AppConfig) -> "ColBERTRetriever":
@@ -68,7 +70,7 @@ class ColBERTRetriever:
             str(getattr(rcfg, "colbert_index_path")),
             str(getattr(rcfg, "colbert_index_name")),
             str(getattr(rcfg, "colbert_model_name", "colbert-ir/colbertv2.0")),
-            str(getattr(rcfg, "colbert_meta_file", "index/colbert/colbert_meta.jsonl")),
+            str(getattr(rcfg, "colbert_meta_file")),
             str(getattr(rcfg, "colbert_experiment")),
             int(getattr(rcfg, "colbert_nranks", 1)),
         )
@@ -118,8 +120,21 @@ class ColBERTRetriever:
         from colbert import Searcher
         from colbert.infra import Run, RunConfig
 
+        key = (
+            str(self.index_path),
+            str(self.index_name),
+            str(self.model_name),
+            str(self.experiment),
+            int(self.nranks),
+        )
+        cached = self.__class__._searcher_cache.get(key)
+        if cached is not None:
+            self._searcher = cached
+            return
+
         with Run().context(RunConfig(root=str(self.index_path), nranks=self.nranks, experiment=self.experiment)):
             self._searcher = Searcher(index=self.index_name, collection=self._collection, checkpoint=self.model_name)
+        self.__class__._searcher_cache[key] = self._searcher
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[LawChunk, float]]:
         if not self.enabled:

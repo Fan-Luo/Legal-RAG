@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 import jieba
+import re
 from rank_bm25 import BM25Okapi
 
 from legalrag.config import AppConfig
@@ -12,6 +13,10 @@ from legalrag.schemas import LawChunk
 from legalrag.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _tokenize_en(text: str) -> List[str]:
+    return re.findall(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?", text.lower())
 
 
 def build_bm25_index(cfg: AppConfig, chunks: List[LawChunk]) -> None:
@@ -31,7 +36,11 @@ def build_bm25_index(cfg: AppConfig, chunks: List[LawChunk]) -> None:
 
     logger.info("[BM25] building (docs=%d) -> %s", len(chunks), bm25_path)
 
-    corpus_tokens = [list(jieba.cut(c.text)) for c in chunks]
+    lang = (getattr(chunks[0], "lang", None) or "zh").strip().lower() if chunks else "zh"
+    if lang == "en":
+        corpus_tokens = [_tokenize_en(c.text) for c in chunks]
+    else:
+        corpus_tokens = [list(jieba.cut(c.text)) for c in chunks]
     bm25 = BM25Okapi(corpus_tokens)
 
     payload = {

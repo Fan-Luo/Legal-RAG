@@ -14,6 +14,7 @@ class LawChunk(BaseModel):
     article_no: str
     article_id: str  # article_no 的数字编号
     text: str
+    lang: Optional[str] = "zh"
     source: Optional[str] = None
     start_char: Optional[int] = None
     end_char: Optional[int] = None

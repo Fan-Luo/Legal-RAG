@@ -16,7 +16,7 @@ from transformers import AutoModel, AutoTokenizer
 from legalrag.config import AppConfig
 from legalrag.llm.client import LLMClient
 from legalrag.schemas import IssueType, LawChunk, RagAnswer, RetrievalHit, TaskType
-from legalrag.retrieval.hybrid_retriever import HybridRetriever
+from legalrag.retrieval.by_lang_retriever import ByLangRetriever
 from legalrag.retrieval.graph_store import LawGraphStore
 from legalrag.routing.router import QueryRouter
 from legalrag.utils.logger import get_logger
@@ -42,6 +42,15 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 def _normalize_tag(tag: str) -> str:
     return (tag or "").strip().lower()
+
+def _normalize_law_text_for_prompt(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\u00a0", " ").replace("\u3000", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\s*\n\s*", " ", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
 
 
 def _select_one_example(
@@ -105,7 +114,7 @@ class RagPipeline:
         self.cfg = cfg
 
         # Retrieval components
-        self.retriever = HybridRetriever(cfg)
+        self.retriever = ByLangRetriever(cfg)
 
         # LLM
         self.llm = LLMClient.from_config(cfg)
@@ -147,6 +156,7 @@ class RagPipeline:
                     parts.append(val)
             return "\n\n".join(parts).strip()
         def _build_law_context_part(c, i, use_chinese):
+            content = _normalize_law_text_for_prompt(getattr(c, "text", "") or "")
             if use_chinese:
                 # 中文
                 return (
@@ -154,7 +164,7 @@ class RagPipeline:
                     f"法律名称：{(getattr(c, 'law_name', '') or '')}\n"
                     f"章节：{(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
                     f"条号：{getattr(c, 'article_id', '') or ''}\n"
-                    f"内容：{(getattr(c, 'text', '') or '').strip()}\n"
+                    f"内容：{content}\n"
                 )
             else:
                 # 英文
@@ -163,7 +173,7 @@ class RagPipeline:
                     f"Law Name: {(getattr(c, 'law_name', '') or '')}\n"
                     f"Chapter/Section: {(getattr(c, 'chapter', '') or '')} {(getattr(c, 'section', '') or '')}\n"
                     f"Article: {getattr(c, 'article_id', '') or ''}\n"
-                    f"Text: {(getattr(c, 'text', '') or '').strip()}\n"
+                    f"Text: {content}\n"
                 )
 
         is_chinese_question = is_chinese(question)

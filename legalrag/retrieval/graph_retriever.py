@@ -86,6 +86,7 @@ class GraphRetriever:
         seeds: List[Any],
         *,
         decision: Any = None,
+        lang: Optional[str] = None,
         top_k: int = 10,
     ) -> List[RetrievalHit]:
         """
@@ -151,6 +152,10 @@ class GraphRetriever:
             c = self.id2chunk.get(aid)
             if not c or not (getattr(c, "text", "") or "").strip():
                 continue
+            if lang:
+                c_lang = (getattr(c, "lang", None) or "zh").strip().lower()
+                if c_lang != lang:
+                    continue
 
             cc = copy.copy(c)
             setattr(cc, "source", "graph")

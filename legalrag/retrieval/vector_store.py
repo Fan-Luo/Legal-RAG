@@ -51,12 +51,7 @@ class VectorStore:
         # os.environ.setdefault("FLAGEMBEDDING_USE_MULTI_PROCESS", "0")
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         # self.model = AutoModel.from_pretrained(model_name)
-        self.model = FlagModel(
-            model_name,
-            query_instruction_for_retrieval="为这个法律问题生成表示以用于检索相关法律条文：",
-            use_fp16=torch.cuda.is_available(),         
-            device=self.device             
-        )
+        self.model = self._get_embedding_model(model_name, self.device)
         # self.model.to(self.device)
         # self.model.eval()
         self.index: faiss.Index | None = None  
@@ -65,6 +60,21 @@ class VectorStore:
         self._meta_mtime: float | None = None
 
     _instances_by_key: ClassVar[Dict[Tuple[str, str, str, str], "VectorStore"]] = {}
+    _model_cache: ClassVar[Dict[Tuple[str, str], FlagModel]] = {}
+
+    @classmethod
+    def _get_embedding_model(cls, model_name: str, device: torch.device) -> FlagModel:
+        key = (str(model_name), str(device))
+        if key in cls._model_cache:
+            return cls._model_cache[key]
+        model = FlagModel(
+            model_name,
+            query_instruction_for_retrieval="为这个法律问题生成表示以用于检索相关法律条文：",
+            use_fp16=torch.cuda.is_available(),
+            device=device,
+        )
+        cls._model_cache[key] = model
+        return model
 
     @classmethod
     def from_config(cls, cfg: AppConfig) -> "VectorStore":
