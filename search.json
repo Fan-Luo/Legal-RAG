@@ -1,0 +1,317 @@
+[
+  {
+    "objectID": "README-zh.html",
+    "href": "README-zh.html",
+    "title": "",
+    "section": "",
+    "text": "Code\n法律条文检索、问答与推理系统\nLegal-RAG 以法律文本为核心语料，完成条文预处理、BM25/FAISS/ColBERT 索引与 Graph 的构建，并通过 FastAPI 提供检索与问答服务，可结合本地 Qwen 或 OpenAI 兼容接口进行检索重排与法律问答生成。"
+  },
+  {
+    "objectID": "README-zh.html#功能特性",
+    "href": "README-zh.html#功能特性",
+    "title": "",
+    "section": "1 功能特性",
+    "text": "1 功能特性\n\n法条预处理：原始文本清洗、分条、结构化为 JSONL\n路由：\n\n规则路由识别任务/问题类型\n可选 LLM 路由覆盖\n\n混合检索：\n\nBM25（关键词匹配）\nDense（BGE + FAISS 向量检索）\nColBERT（late interaction 精排通道）\n多通道加权融合\n按语言路由（zh/en）\nRRF + weighted sum 融合多通道结果\nGraph（基于法条关系扩展候选）\nReranker（CrossEncoder 或 LLM 重排）\n\nLLM 生成：\n\n本地 Qwen（默认）\n可选 OpenAI 兼容接口\n\n服务与界面：\n\nFastAPI 后端 API\nWeb UI（多轮问答、条文展示、PDF 上传）\n\n脚本支持：\n\n预处理 / 索引构建 / 检索评估"
+  },
+  {
+    "objectID": "README-zh.html#在线演示",
+    "href": "README-zh.html#在线演示",
+    "title": "",
+    "section": "2 在线演示",
+    "text": "2 在线演示\n可直接访问 https://huggingface.co/spaces/flora-l/Legal-RAG （在线 Demo，无需本地环境）\n说明：\n\n该 Hugging Face Space 当前未启用 GPU，因此暂不支持本地 Qwen 模型推理。\n生成答案需要使用 OpenAI API Key。使用后，您可以随时在 OpenAI 账户中撤销 OPENAI_API_KEY。\n该 Space一段时间后会进入休眠。如需激活，请留言或发issue。"
+  },
+  {
+    "objectID": "README-zh.html#系统架构",
+    "href": "README-zh.html#系统架构",
+    "title": "",
+    "section": "3 系统架构",
+    "text": "3 系统架构"
+  },
+  {
+    "objectID": "README-zh.html#快速开始",
+    "href": "README-zh.html#快速开始",
+    "title": "",
+    "section": "4 快速开始",
+    "text": "4 快速开始\n\n1. 克隆项目并安装依赖\ngit clone https://github.com/Fan-Luo/Legal-RAG.git\ncd Legal-RAG\npip install -r requirements.txt\n\n\n2. 准备法律数据并构建索引\n法律数据位于 data/raw/，可替换或增加需要的其他法律文本。 默认语料包含：\n\n中文：中华人民共和国民法典\n英文：Uniform Commercial Code（UCC）\n\n系统会根据问题语言路由到对应语料与索引。\n\n# 预处理为 JSONL\npython -m scripts.preprocess_law\n\n# 构建 FAISS + BM25 + ColBERT 索引\npython -m scripts.build_index\n\n# 构建 法律知识图谱\npython -m scripts.build_graph\n生成的语料按语言拆分：\n\ndata/processed/law_zh.jsonl, data/processed/law_en.jsonl\ndata/index/zh/..., data/index/en/...\ndata/graph/law_graph_zh.jsonl, data/graph/law_graph_en.jsonl\n\n\n\n3. 启动 API 服务\npython -m uvicorn legalrag.api.server:app --host 127.0.0.1 --port 8000\n\n默认使用本地 Qwen 模型（如 Qwen/Qwen2.5-3B-Instruct），需要本地机器有GPU 和足够内存。 如需使用 OpenAI，请参考 「在线演示（Hugging Face Spaces） / OpenAI 配置」。\n\n\n\n4. 打开演示界面\n访问：http://127.0.0.1:8000/ 或 http://127.0.0.1:8000/ui/\n提示：\n\nPDF 上传建议使用可复制文本的 PDF，以提高解析准确率。\n本地 LLM（Qwen / BGE）建议使用 GPU 或充足显存；OpenAI API 为可选方案。"
+  },
+  {
+    "objectID": "README-zh.html#服务拆分",
+    "href": "README-zh.html#服务拆分",
+    "title": "",
+    "section": "5 服务拆分",
+    "text": "5 服务拆分\n\nAPI 服务：legalrag.api.server:app\n检索服务：legalrag.services.retrieval_api:app\n索引管理服务：legalrag.services.index_api:app\n\n本地多服务启动：\ndocker compose up --build\n索引版本管理：\npython scripts/build_index.py --index-version v1 --activate\npython scripts/index_admin.py list\npython scripts/index_admin.py activate v1"
+  },
+  {
+    "objectID": "README-zh.html#示例",
+    "href": "README-zh.html#示例",
+    "title": "",
+    "section": "6 示例",
+    "text": "6 示例\nfrom legalrag.config import AppConfig\nfrom legalrag.pipeline.rag_pipeline import RagPipeline\n\ncfg = AppConfig.load(None)\npipeline = RagPipeline(cfg)\n\nquestion = \"合同生效后，如果对价款和履行地点没有约定，应当如何处理？\"\nans = pipeline.answer(question)\n\nprint(\"Question:\", question)\nprint(\"Answer:\", ans.answer)"
+  },
+  {
+    "objectID": "README-zh.html#项目结构",
+    "href": "README-zh.html#项目结构",
+    "title": "",
+    "section": "7 项目结构",
+    "text": "7 项目结构\nLegal-RAG/\n│\n├── legalrag/\n│   ├── __init__.py\n│   ├── config.py                   \n│   ├── schemas.py                 \n│   ├── llm/\n│   │   ├── __init__.py\n│   │   └── client.py              # Qwen / OpenAI LLMClient \n│   │\n│   ├── retrieval/\n│   │   ├── __init__.py\n│   │   ├── hybrid_retriever.py    # Dense + Sparse + Graph\n│   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)\n│   │   ├── dense_retriever.py     # Dense (BGE + FAISS)\n│   │   ├── colbert_retriever.py\n│   │   ├── by_lang_retriever.py   # 按语言路由\n│   │   ├── graph_retriever.py\n│   │   ├── graph_store.py         # law_graph / legal_kg  \n│   │   ├── rerankers.py\n│   │   ├── corpus_loader.py       # read all chunks from processed_dir\n│   │   ├── vector_store.py       \n│   │   └── builders\n│   │       ├── __init__.py\n│   │       ├── bm25_builder.py\n│   │       ├── colbert_builder.py\n│   │       ├── faiss_builder.py\n│   │       ├── graph_builder.py\n│   │       └── incremental_dense_builder.py\n│   │\n│   ├── routing/\n│   │   ├── __init__.py\n│   │   └── router.py              # TaskType/IssueType + Mode 路由\n│   │\n│   ├── pdf/\n│   │   ├── __init__.py\n│   │   └── parser.py              # pdfplumber + OCR fallback\n│   │\n│   ├── ingest/\n│   │   ├── __init__.py\n│   │   ├── ingestor.py            # LawChunk JSONL \n│   │   ├── orchestrator.py        # jobs + status\n│   │   └── service.py         \n│   │\n│   ├── pipeline/\n│   │   ├── __init__.py\n│   │   └── rag_pipeline.py        # Graph-aware RAG 核心推理链\n│   │\n│   ├── prompts/\n│   │   ├──  prompt_en.json        # English Prompt \n│   │   └──  prompt_zh.json        # Chinese Prompt \n│   │\n│   ├── utils/\n│   │   ├── __init__.py\n│   │   ├── logger.py              # 日志 \n│   │   └── text.py                # 文本清洗 / 正则工具\n│   │\n│   └── api/\n│       ├── __init__.py\n│       └── server.py              # FastAPI（/rag/retrieve, /rag/answer, /ingest/pdf）\n│\n├── ui/\n│   ├── index.qmd\n│   └── demo.qmd\n│\n├── scripts/\n│   ├── preprocess_law.py          # 法条解析 → LawChunk JSONL\n│   ├── build_index.py             # FAISS + BM25 索引构建\n│   ├── build_graph.py             # law_graph / legal_kg 构建\n│   └── evaluate_retrieval.py      # Hit@K / MRR / nDCG\n│\n├── notebooks/\n│   ├── 01_Launch_the_UI.ipynb\n│   ├── 02_LegalRAG_Pipeline.ipynb\n│   ├── 03_Retrieval_Performance_Evaluation.ipynb\n│   └── 04_Law_Graph_Visualization.ipynb\n│\n├── data/\n│   ├── raw/                         \n│   │   ├── minfadian.txt            \n│   │   └── ucc/                    \n│   ├── processed/                 # law_zh.jsonl / law_en.jsonl\n│   ├── index/                     # faiss/bm25/colbert per language\n│   └── graph/                     # law_graph_zh.jsonl / law_graph_en.jsonl\n│   └── eval/\n│       └── law_qa.jsonl\n│\n├── docs/\n│   ├── architecture.mmd\n│   └── architecture.png\n│\n├── tests/\n│   ├── test_router.py\n│   └── test_retrieval.py\n│\n├── README.md\n├── README-zh.md\n├── LICENSE\n├── pyproject.toml\n├── requirements.txt\n├── app.py                           # Hugging Face Space 入口\n├── Dockerfile\n└── .gitignore"
+  },
+  {
+    "objectID": "README-zh.html#可扩展方向",
+    "href": "README-zh.html#可扩展方向",
+    "title": "",
+    "section": "8 可扩展方向",
+    "text": "8 可扩展方向\n\n更复杂的法律知识图谱\n高级查询路由 / 多模型融合\n支持其他法律领域或多语种"
+  },
+  {
+    "objectID": "README-zh.html#许可声明",
+    "href": "README-zh.html#许可声明",
+    "title": "",
+    "section": "9 许可声明",
+    "text": "9 许可声明\nApache License 2.0\n本仓库仅包含源码，不包含第三方模型权重。用户需自行遵守所使用模型的许可证（如 Qwen、BGE、OpenAI 等）。"
+  },
+  {
+    "objectID": "README-zh.html#免责声明",
+    "href": "README-zh.html#免责声明",
+    "title": "",
+    "section": "10 免责声明",
+    "text": "10 免责声明\n本项目仅用于提供法律信息辅助，供学习与研究参考之用。 使用者不应将本项目作为专业法律咨询的替代，因使用本项目所产生的任何直接或间接后果，项目作者及贡献者不承担任何责任。"
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html",
+    "href": "notebooks/02_LegalRAG_Pipeline.html",
+    "title": "Run LegalRAG Pipeline",
+    "section": "",
+    "text": "This notebook demonstrates the end-to-end behavior of the Legal RAG system, covering data preprocessing, query understanding, routing, hybrid retrieval, and evidence-backed response generation."
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#repository-install",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#repository-install",
+    "title": "Run LegalRAG Pipeline",
+    "section": "1 Repository Install",
+    "text": "1 Repository Install\nFirst, pull the project source code and initialize the execution environment.\ngit clone https://github.com/Fan-Luo/Legal-RAG.git\ncd Legal-RAG\npip install -e ."
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#data-preprocess",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#data-preprocess",
+    "title": "Run LegalRAG Pipeline",
+    "section": "2 Data preprocess",
+    "text": "2 Data preprocess\nBefore the LegalRAG pipeline can serve queries, the legal corpus must be transformed into structured, searchable representations.\nIn the offline preprocessing stage, raw legal texts are converted into normalized data artifacts, retrieval indices, and a legal knowledge graph through the following steps:\n\nPreprocess law files\nRaw legal documents are parsed, cleaned, and normalized into a unified JSONL format. Each legal provision is assigned a stable identifier and enriched with structural metadata such as law name, part, chapter, article number, and source file.\npython -m scripts.preprocess_law\nBuild retrieval indices\nMultiple complementary retrieval indices are constructed to support lexical, dense, and late-interaction search paradigms:\n\nBM25 for sparse keyword-based retrieval\nFAISS for dense vector similarity search\nColBERT for token-level late interaction retrieval\n\npython -m scripts.build_index\nConstruct the legal knowledge graph\nLegal articles are connected via structured relationships (e.g., citation, reference, dependency), forming a directed legal knowledge graph that enables graph-based expansion and contextual reasoning.\npython -m scripts.build_graph\n\nGenerated Data Artifacts:\n\n\n\n    \n\n\n\n\n\n\nLang\nCategory\nPath\nExists\nSize (MB)\n\n\n\n\n11\nen\nGraph\ndata/graph/law_graph_en.jsonl\nTrue\n0.228\n\n\n3\nen\nIndex\ndata/index/en/bm25.pkl\nTrue\n1.796\n\n\n9\nen\nIndex\ndata/index/en/colbert/colbert_meta.jsonl\nTrue\n0.987\n\n\n5\nen\nIndex\ndata/index/en/faiss/faiss.index\nTrue\n1.884\n\n\n7\nen\nIndex\ndata/index/en/faiss/faiss_meta.jsonl\nTrue\n0.962\n\n\n1\nen\nProcessed\ndata/processed/law_en.jsonl\nTrue\n0.982\n\n\n10\nzh\nGraph\ndata/graph/law_graph_zh.jsonl\nTrue\n0.405\n\n\n2\nzh\nIndex\ndata/index/zh/bm25.pkl\nTrue\n0.992\n\n\n8\nzh\nIndex\ndata/index/zh/colbert/colbert_meta.jsonl\nTrue\n0.654\n\n\n4\nzh\nIndex\ndata/index/zh/faiss/faiss.index\nTrue\n4.018\n\n\n6\nzh\nIndex\ndata/index/zh/faiss/faiss_meta.jsonl\nTrue\n0.601\n\n\n0\nzh\nProcessed\ndata/processed/law_zh.jsonl\nTrue\n0.658\n\n\n\n\n\n    \n\n  \n    \n\n  \n    \n  \n    \n\n  \n\n    \n  \n\n\n  \n    \n    \n\n  \n    \n  \n    \n    \n  \n\n    \n  \n\n\nExample entries from law_zh.jsonl and law_en.jsonl:\n\n\n\n    \n\n\n\n\n\n\nid\nlaw_name\nlang\narticle_no\narticle_id\ntext\nsource\n\n\n\n\n0\nminfadian.txt::一\n中华人民共和国民法典\nzh\n第一条\n1\n第一条 为了保护民事主体的合法权益，调整民事关系，维护社会和经济秩序，适应中国特色社会主义发...\nminfadian.txt\n\n\n1\nminfadian.txt::二\n中华人民共和国民法典\nzh\n第二条\n2\n第二条 民法调整平等主体的自然人、法人和非法人组织之间的人身关系和财产关系。\nminfadian.txt\n\n\n2\nminfadian.txt::三\n中华人民共和国民法典\nzh\n第三条\n3\n第三条 民事主体的人身权利、财产权利以及其他合法权益受法律保护，任何组织或者个人不得侵犯。\nminfadian.txt\n\n\n\n\n\n    \n\n  \n    \n\n  \n    \n  \n    \n\n  \n\n    \n  \n\n\n    \n  \n\n\n\n    \n\n\n\n\n\n\nid\nlaw_name\nlang\narticle_no\narticle_id\ntext\nsource\n\n\n\n\n0\nucc_1.txt::1-101\nUniform Commercial Code\nen\n§ 1-101\n1-101\n§ 1-101. Short Titles.(a) This [Act] may be ci...\nucc_1.txt\n\n\n1\nucc_1.txt::1-102\nUniform Commercial Code\nen\n§ 1-102\n1-102\n§ 1-102. Scope of Article.This article applies...\nucc_1.txt\n\n\n2\nucc_1.txt::1-103\nUniform Commercial Code\nen\n§ 1-103\n1-103\n§ 1-103. Construction of Uniform Commercial Co...\nucc_1.txt\n\n\n\n\n\n    \n\n  \n    \n\n  \n    \n  \n    \n\n  \n\n    \n  \n\n\n    \n  \n\n\n\n\n\nField\nDescription\n\n\n\n\nid\nInternal numeric identifier\n\n\nlaw_name\nName of the law\n\n\nlang\nLanguage of the law article\n\n\narticle_no\nArticle number (human-readable)\n\n\narticle_id\nStable article identifier\n\n\ntext\nFull article text\n\n\nsource\nOriginal source file"
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#initialize-the-rag-pipeline",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#initialize-the-rag-pipeline",
+    "title": "Run LegalRAG Pipeline",
+    "section": "3 Initialize the RAG pipeline",
+    "text": "3 Initialize the RAG pipeline\nThis section sets up the RAG pipeline and configures the underlying language model. The pipeline is constructed from a centralized configuration, ensuring that retrieval, ranking, and generation components are consistently parameterized.\n\nfrom legalrag.pipeline.rag_pipeline import RagPipeline\nfrom legalrag.config import AppConfig\n\ncfg = AppConfig.load(None)\ncfg.llm.provider = \"qwen-local\"\ncfg.llm.model = \"Qwen/Qwen2.5-3B-Instruct\"\npipeline = RagPipeline(cfg)\n\nThe default configuration uses local Qwen model as the generation model by default, and it can be switched to an OpenAI model:\ncfg.llm.provider = \"openai\"\ncfg.llm.model = \"gpt-4.1-mini\"   \n# Requires setting OPENAI_API_KEY in environment variables"
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#query-understanding-and-routing",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#query-understanding-and-routing",
+    "title": "Run LegalRAG Pipeline",
+    "section": "4 Query Understanding and Routing",
+    "text": "4 Query Understanding and Routing\nThis step distinguishes between different query types and selects a retrieval mode accordingly.\nAccurate query understanding is critical, as it directly influences downstream retrieval strategies and answer generation behavior.\n\nfrom legalrag.routing.router import QueryRouter\nfrom legalrag.llm.client import LLMClient\n\nllm = LLMClient.from_config(cfg)\nrouter = QueryRouter(llm_client=llm, llm_based=cfg.routing.llm_based)\nquestion = '已经有两个亲生孩子的家庭可以再收养一个孩子吗?'\ndecision = router.route(question)\nprint('Issue Type: ', decision.issue_type)\nprint('Task Type: ', decision.task_type)\nprint('mode: ', decision.mode)\n\nIssue Type:  IssueType.MARRIAGE_FAMILY\nTask Type:  TaskType.JUDGE_STYLE\nmode:  RoutingMode.RAG"
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#retrieve-legal-provisions",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#retrieve-legal-provisions",
+    "title": "Run LegalRAG Pipeline",
+    "section": "5 Retrieve legal provisions",
+    "text": "5 Retrieve legal provisions\nIn this stage, the system retrieves candidate legal provisions relevant to the query.\nLegalRAG uses a multi-channel retrieval strategy that combines dense semantic search, sparse lexical matching, and late-interaction models. Depending on the retrieval mode inferred during query understanding, a graph-based enhancement stage may be applied to expand the candidate set with structurally related legal provisions. Final ranking is refined using cross-encoder or LLM-based reranking.\n\nquestion = '已经有两个亲生孩子的家庭可以再收养一个孩子吗?'\n_, hits, _ = pipeline.retrieve(question, llm, top_k=10, decision=decision)\nhits_to_dataframe(hits)\n\n\n    \n\n\n\n\n\n\nscore\nchannel\narticle_id\npreview\n\n\n\n\n0\n1.04\n[dense, colbert, bm25]\n1100\n第一千一百条 无子女的收养人可以收养两名子女；有子女的收养人只能收养一名子女。 收养孤儿、残疾未成年人或者儿童福利机构抚养的查找不到生父母的未成年人，可以不受前款和本法第一千零九十八条第一项规定的限制。...\n\n\n1\n0.67\n[dense, colbert]\n1103\n第一千一百零三条 继父或者继母经继子女的生父母同意，可以收养继子女，并可以不受本法第一千零九十三条第三项、...\n\n\n2\n0.55\n[dense, colbert]\n1099\n第一千零九十九条 收养三代以内旁系同辈血亲的子女，可以不受本法第一千零九十三条第三项、...\n\n\n3\n0.40\n[dense, bm25]\n1101\n第一千一百零一条 有配偶者收养子女，应当夫妻共同收养。...\n\n\n4\n0.31\n[bm25, colbert]\n699\n第六百九十九条 同一债务有两个以上保证人的，保证人应当按照保证合同约定的保证份额，承担保证责任；没有约定保证份额的，债权人可以请求任何一个保证人在其保证范围内承担保证责任。...\n\n\n5\n0.31\n[dense, colbert]\n1117\n第一千一百一十七条 收养关系解除后，养子女与养父母以及其他近亲属间的权利义务关系即行消除，与生父母以及其他近亲属间的权利义务关系自行恢复。但是，成年养子女与生父母以及其他近亲属间的权利义务关系是否恢复，可以协商确定。...\n\n\n6\n0.26\n[colbert, dense]\n1098\n第一千零九十八条 收养人应当同时具备下列条件： （一）无子女或者只有一名子女； （二）有抚养、教育和保护被收养人的能力； （三）未患有在医学上认为不应当收养子女的疾病； （四）无不利于被收养人健康成长的违法犯罪记录； （五）年满三十周岁。...\n\n\n7\n0.23\n[dense, colbert]\n1097\n第一千零九十七条 生父母送养子女，应当双方共同送养。生父母一方不明或者查找不到的，可以单方送养。...\n\n\n8\n0.23\n[bm25, colbert]\n1105\n第一千一百零五条 收养应当向县级以上人民政府民政部门登记。收养关系自登记之日起成立。 收养查找不到生父母的未成年人的，办理登记的民政部门应当在登记前予以公告。 收养关系当事人愿意签订收养协议的，可以签订收养协议。 收养关系当事人各方或者一方要求办理收养公证的，应当办理收养公证。 县级以上人民政府民政...\n\n\n9\n0.18\n[bm25, colbert]\n1114\n第一千一百一十四条 收养人在被收养人成年以前，不得解除收养关系，但是收养人、送养人双方协议解除的除外。养子女八周岁以上的，应当征得本人同意。 收养人不履行抚养义务，有虐待、遗弃等侵害未成年养子女合法权益行为的，送养人有权要求解除养父母与养子女间的收养关系。送养人、收养人不能达成解除收养关系协议的，可...\n\n\n\n\n\n    \n\n  \n    \n\n  \n    \n  \n    \n\n  \n\n    \n  \n\n\n    \n  \n\n\n\nquestion = 'What standards must goods satisfy to be merchantable？'\n_, hits, _ = pipeline.retrieve(question, llm, top_k=10, decision=decision)\nhits_to_dataframe(hits)\n\n\n\n\n\n    \n\n\n\n\n\n\nscore\nchannel\narticle_id\npreview\n\n\n\n\n0\n1.07\n[dense, bm25, colbert]\n2A-212\n§ 2A-212. IMPLIED WARRANTY OF MERCHANTABILITY. (1) Except in afinance lease, a warranty that the goods will be merchantable is implied in alease contrac...\n\n\n1\n1.01\n[dense, colbert, bm25]\n2-314\n§ 2-314. Implied Warranty: Merchantability; Usage of Trade. (1) Unless excluded or modified (Section2-316), a warranty that the goods shall be merchanta...\n\n\n2\n0.34\n[dense, colbert]\n2A-511\n§ 2A-511. MERCHANT LESSEE's DUTIES AS TO RIGHTFULLY REJECTED GOODS. (1) Subject to any security interest of a lessee (Section2A-508(5)), if a lessoror as...\n\n\n3\n0.34\n[bm25, colbert]\n2-105\n§ 2-105. Definitions: Transferability; \"Goods\"; \"Future\" Goods; \"Lot\"; \"Commercial Unit\". (1)\"Goods\" means all things (including specially manufacture...\n\n\n4\n0.33\n[dense, colbert]\n2-603\n§ 2-603. Merchant Buyer's Duties as to Rightfully Rejected Goods. (1) Subject to any security interest in the buyer (subsection (3) of Section2-711), wh...\n\n\n5\n0.18\n[colbert, dense]\n7-207\n§ 7-207. Goods Must Be Kept Separate; Fungible Goods.(a) Unless the warehouse receipt provides otherwise, a warehouse shall keep separate the goods covere...\n\n\n\n\n\n    \n\n  \n    \n\n  \n    \n  \n    \n\n  \n\n    \n  \n\n\n    \n  \n\n\nThe result shows how different retrieval signals contributed to the final ranking for debugging, evaluation, and trust in legal AI systems."
+  },
+  {
+    "objectID": "notebooks/02_LegalRAG_Pipeline.html#answer-legal-questions",
+    "href": "notebooks/02_LegalRAG_Pipeline.html#answer-legal-questions",
+    "title": "Run LegalRAG Pipeline",
+    "section": "6 Answer legal questions",
+    "text": "6 Answer legal questions\nUsing the retrieved provisions as evidence, the system generates a final answer.\nAnswer generation is explicitly grounded in the retrieved legal texts, ensuring that conclusions are traceable to authoritative sources.\n\n\nQuestion 1: 已经有两个孩子的家庭可以再收养一个孩子吗?\nquestion = '已经有两个孩子的家庭可以再收养一个孩子吗?'\nanswer = pipeline.answer(question).answer\nrender_legal_json_md(json.loads(answer))\n\n\n结论\n\n已有两个孩子的家庭不可以再收养一个孩子。\n\n分析论证\n\n第一千一百条 无子女的收养人可以收养两名子女；有子女的收养人只能收养一名子女。\n\n\n根据《中华人民共和国民法典》第一百一百条规定，已婚人士即使有两个孩子也不能再收养另一个孩子。\n\n参考法条\n\n民法典 · 第「1100」条\n\n\n\n\n\nQuestion 2: What standards must goods satisfy to be merchantable？\nquestion = 'What standards must goods satisfy to be merchantable？'\nanswer = pipeline.answer(question).answer\nrender_legal_json_md(json.loads(answer))\n\n\nConclusion\n\nThe goods must meet the criteria outlined in the Uniform Commercial Code to be considered merchantable.\n\nReasoning\n\nExcept in a finance lease, a warranty that the goods will be merchantable is implied in a lease contract if the lessor is a merchant with respect to goods of that kind.\n\n\nFor goods to be merchantable according to the Uniform Commercial Code, the lessor must be deemed a merchant concerning the type of goods involved.\n\n\n(a) Pass without objection in the trade under the description in the lease agreement;\n\n\nGoods are considered merchantable if they pass inspection without objections during trading under the agreed-upon description.\n\n\n(b) In the case of fungible goods, are of fair average quality within the description;\n\n\nFungible goods are deemed merchantable if they maintain fair average quality relative to the described standard.\n\n\n(c) Are fit for the ordinary purposes for which goods of that type are used;\n\n\nMerchantable goods must fulfill the typical uses intended for goods of their type.\n\n\n(d) Run, within the variation permitted by the lease agreement, of even kind, quality, and quantity within each unit and among all units involved;\n\n\nEach unit and all units of the goods must adhere to the specified variance limits set forth in the lease agreement.\n\n\n(e) Are adequately contained, packaged, and labeled as the lease agreement may require;\n\n\nThe goods must be properly stored, packed, and labeled in accordance with the lease agreement.\n\n\n(f) Conform to any promises or affirmations of fact made on the container or label;\n\n\nThe goods must comply with any explicit representations about the product on its packaging or labels.\n\nReferenced Provisions\n\nUniform Commercial Code · 2A-212"
+  },
+  {
+    "objectID": "notebooks/03_Retrieval_Performance_Evaluation.html",
+    "href": "notebooks/03_Retrieval_Performance_Evaluation.html",
+    "title": "Retrieval Performance Evaluation",
+    "section": "",
+    "text": "This notebook focuses on the systematic evaluation of retrieval performance. It proceeds in three stages:"
+  },
+  {
+    "objectID": "notebooks/03_Retrieval_Performance_Evaluation.html#generate-synthetic-evaluation-dataset",
+    "href": "notebooks/03_Retrieval_Performance_Evaluation.html#generate-synthetic-evaluation-dataset",
+    "title": "Retrieval Performance Evaluation",
+    "section": "1 Generate Synthetic Evaluation Dataset",
+    "text": "1 Generate Synthetic Evaluation Dataset\nEvaluating legal retrievers requires ground truth dataset with question–reference article pairs.\nGenerates synthetic legal questions by transforming legal corpus into natural-language queries makes it possible to evaluate retrieval behavior at scale.\n\n\nLoad the law corpus and sample an example\ncorpus = Path(cfg.paths.law_jsonl)\nchunks = [json.loads(l) for l in corpus.open(\"r\", encoding=\"utf-8\") if l.strip()]\ndf_chunks = pd.DataFrame(chunks)\n\nprint(\"Example law chunk:\", )\ndisplay(df_chunks.drop(columns=[\"subpart\", \"section\", \"article_key\", \"source\"]).sample(1, random_state=1))\nprint(\"Number of law chunks:\", len(df_chunks))\n\n\nExample law chunk:\n\n\n\n\n\n\n\n\n\nid\nlaw_name\npart\nchapter\narticle_no\narticle_id\ntext\n\n\n\n\n1179\nminfadian.txt::一千一百八十\n中华人民共和国民法典\n七编 侵权责任\n二章 损害赔偿\n第一千一百八十条\n1180\n第一千一百八十条 因同一侵权行为造成多人死亡的，可以以相同数额确定死亡赔偿金。\n\n\n\n\n\n\n\nNumber of law chunks: 1260\n\n\n\n\nGenerate synthetic ground-truth legal query–evidence evaluation dataset\nfrom scripts.generate_synthetic_data import build_ground_truth_queries\n\ndf_queries = build_ground_truth_queries(\n    df_chunks,\n    per_article=2,\n    max_articles=200,\n    total_queries=150,\n    logger=logger,\n    zh_ratio=0.9,\n    generator_llm=llm,\n    judge_llm=llm,\n    embedding_model=embedding_model\n)\n\ndf_sample = df_queries.sample(5, random_state=1)\ndisplay(df_sample.drop(columns=[\"lang\", \"round\", \"rewritten\", \"score\"]))\nprint(\"Generated queries count:\", len(df_queries))\n\n\nGenerated queries count: 150\n\n\n\n\n\n\n\n\n\nquery\nrole\nlaw_name\narticle_no\narticle_id\n\n\n\n\n14\n听起来挺复杂的，那如果我在签署合同时已经意识到这些风险了，是否还能要求赔偿损失？\nuser\n中华人民共和国民法典\n第七百三十八条\n738\n\n\n98\n最后一个问题了，这个规定适用于所有的技术咨询服务合同吗？\nuser\n中华人民共和国民法典\n第八百八十条\n880\n\n\n75\n认购书或者订购书等是否属于预约合同？\nuser\n中华人民共和国民法典\n第四百九十五条\n495\n\n\n16\nWhen all parties sign, seal, or affix their fi...\ninhouse\n中华人民共和国民法典\n第四百九十三条\n493\n\n\n131\n当合同无效是由于承租人的不当行为引起时，租赁物的所有权归谁，承租人需不需要向出租人进行经济补偿？\nlawyer\n中华人民共和国民法典\n第七百六十条\n760"
+  },
+  {
+    "objectID": "notebooks/03_Retrieval_Performance_Evaluation.html#illustrate-multi-channel-multi-stage-retrieval",
+    "href": "notebooks/03_Retrieval_Performance_Evaluation.html#illustrate-multi-channel-multi-stage-retrieval",
+    "title": "Retrieval Performance Evaluation",
+    "section": "2 Illustrate Multi-channel Multi-stage Retrieval",
+    "text": "2 Illustrate Multi-channel Multi-stage Retrieval\nThe retrieval pipeline in Legal-RAG is designed as a multi-stage, hybrid, and graph-aware process, balancing recall, precision, and interpretability. Rather than relying on a single retrieval signal, the retriever progressively refines candidates through multi-channel coarse retrieval, score fusion, graph expansion, and reranking.\n\n\nSample a synthetic query to illustrate the retrieval pipeline\nsample = df_sample[[\"query\", \"article_id\"]].sample(1)\ndisplay(sample)\nquestion = sample[\"query\"].values[0]\n\n\n\n\n\n\n\n\n\nquery\narticle_id\n\n\n\n\n75\n认购书或者订购书等是否属于预约合同？\n495\n\n\n\n\n\n\n\n\nSparse lexical retrieval\nSparse lexical retrieval (BM25) preserves keyword and statutory phrase matching, performing pure text-based retrieval.\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\n\n\n\n\n0\n37.36\n495\n二章 合同的订立\n第四百九十五条 当事人约定在将来一定期限内订立合同的认购书、订购书、预订书等，构成预约合同。...\n\n\n1\n8.09\n1134\n三章 遗嘱继承和遗赠\n第一千一百三十四条 自书遗嘱由遗嘱人亲笔书写，签名，注明年、月、日。...\n\n\n2\n7.53\n501\n三章 合同的效力\n第五百零一条 当事人在订立合同过程中知悉的商业秘密或者其他应当保密的信息，无论合同是否成立，...\n\n\n3\n7.47\n250\n五章 国家所有权和集体所有权、私人所有权\n第二百五十条 森林、山岭、草原、荒地、滩涂等自然资源，属于国家所有，但是法律规定属于集体所有...\n\n\n4\n7.03\n254\n五章 国家所有权和集体所有权、私人所有权\n第二百五十四条 国防资产属于国家所有。 铁路、公路、电力设施、电信设施和油气管道等基础设施，...\n\n\n\n\n\n\n\n\n\nDense semantic retrieval\nDense retrieval (BGE embedding-based FAISS search) captures semantic similarity and paraphrased intent.\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\n\n\n\n\n0\n0.65\n495\n二章 合同的订立\n第四百九十五条 当事人约定在将来一定期限内订立合同的认购书、订购书、预订书等，构成预约合同。...\n\n\n1\n0.53\n491\n二章 合同的订立\n第四百九十一条 当事人采用信件、数据电文等形式订立合同要求签订确认书的，签订确认书时合同成立...\n\n\n2\n0.53\n471\n二章 合同的订立\n第四百七十一条 当事人订立合同，可以采取要约、承诺方式或者其他方式。...\n\n\n3\n0.51\n493\n二章 合同的订立\n第四百九十三条 当事人采用合同书形式订立合同的，最后签名、盖章或者按指印的地点为合同成立的地...\n\n\n4\n0.51\n483\n二章 合同的订立\n第四百八十三条 承诺生效时合同成立，但是法律另有规定或者当事人另有约定的除外。...\n\n\n\n\n\n\n\n\n\nLate-interaction retrieval\nLate-interaction retrieval (ColBERT) encodes each token into a contextualized embedding and computes relevance through fine-grained token–token interactions at query time. This design preserves detailed lexical signals while retaining strong semantic generalization.\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\n\n\n\n\n0\n22.08\n495\n二章 合同的订立\n第四百九十五条 当事人约定在将来一定期限内订立合同的认购书、订购书、预订书等，构成预约合同。...\n\n\n1\n19.97\n502\n三章 合同的效力\n第五百零二条 依法成立的合同，自成立时生效，但是法律另有规定或者当事人另有约定的除外。 依照...\n\n\n2\n19.92\n493\n二章 合同的订立\n第四百九十三条 当事人采用合同书形式订立合同的，最后签名、盖章或者按指印的地点为合同成立的地...\n\n\n3\n19.88\n888\n二十一章 保管合同\n第八百八十八条 保管合同是保管人保管寄存人交付的保管物，并返还该物的合同。 寄存人到保管人处...\n\n\n4\n19.84\n984\n二十九章 不当得利\n第九百八十四条 管理人管理事务经受益人事后追认的，从管理事务开始时起，适用委托合同的有关规定...\n\n\n\n\n\n\n\n\n\nMulti-channel Retrieval Fusion\nTo integrate heterogeneous retrieval signals, Legal-RAG applies a fusion step over the multi-channel results. Two fusion strategies are supported:\n\nReciprocal Rank Fusion (RRF) Candidates are ranked based on the inverse of their rank positions across channels, emphasizing consensus among retrievers.\nNormalized score blending (norm_blend) Raw scores from different retrievers are normalized into a comparable range and linearly combined.\n\nThis fusion step yields a unified ranked list of top candidates, mitigating the weaknesses of any single retrieval method.\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\nchannel\n\n\n\n\n0\n1.18\n495\n二章 合同的订立\n第四百九十五条 当事人约定在将来一定期限内订立合同的认购书、订购书、预订书等，构成预约合同。...\n[dense, bm25, colbert]\n\n\n1\n0.32\n491\n二章 合同的订立\n第四百九十一条 当事人采用信件、数据电文等形式订立合同要求签订确认书的，签订确认书时合同成立...\n[dense, colbert]\n\n\n2\n0.31\n471\n二章 合同的订立\n第四百七十一条 当事人订立合同，可以采取要约、承诺方式或者其他方式。...\n[dense, colbert]\n\n\n3\n0.30\n493\n二章 合同的订立\n第四百九十三条 当事人采用合同书形式订立合同的，最后签名、盖章或者按指印的地点为合同成立的地...\n[dense, colbert]\n\n\n4\n0.22\n469\n二章 合同的订立\n第四百六十九条 当事人订立合同，可以采用书面形式、口头形式或者其他形式。 书面形式是合同书、...\n[colbert, dense]\n\n\n\n\n\n\n\n\n\nGraph-Augmented Retrieval\nTo capture structural legal relationships, such as:\n\nGeneral–specific rule hierarchies\nCross-article references\nImplicit doctrinal dependencies\n\na graph-based enhancement stage is applied. Using the fusion top candidates as seeds, a graph walk augments the candidate set with structurally relevant but textually under-retrieved articles.\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\n\n\n\n\n0\n0.36\n490\n二章 合同的订立\n第四百九十条 当事人采用合同书形式订立合同的，自当事人均签名、盖章或者按指印时合同成立。在签...\n\n\n1\n0.34\n494\n二章 合同的订立\n第四百九十四条 国家根据抢险救灾、疫情防控或者其他需要下达国家订货任务、指令性任务的，有关民...\n\n\n2\n0.34\n472\n二章 合同的订立\n第四百七十二条 要约是希望与他人订立合同的意思表示，该意思表示应当符合下列条件： （一）内容...\n\n\n3\n0.34\n470\n二章 合同的订立\n第四百七十条 合同的内容由当事人约定，一般包括下列条款： （一）当事人的姓名或者名称和住所；...\n\n\n4\n0.33\n492\n二章 合同的订立\n第四百九十二条 承诺生效的地点为合同成立的地点。 采用数据电文形式订立合同的，收件人的主营业...\n\n\n\n\n\n\n\n\n\nReranking\nA reranking stage using cross-encoder or LLM-based scoring refines ordering at the end. Reranking prioritizes answer-critical provisions while demoting peripheral or weakly connected articles based on higher-resolution signals, such as:\n\nQuery–article semantic alignment\nCoverage of legally salient terms\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nscore\narticle_id\nchapter\npreview\nchannel\n\n\n\n\n0\n1.11\n495\n二章 合同的订立\n第四百九十五条 当事人约定在将来一定期限内订立合同的认购书、订购书、预订书等，构成预约合同。...\n[dense, bm25, colbert]\n\n\n1\n0.21\n491\n二章 合同的订立\n第四百九十一条 当事人采用信件、数据电文等形式订立合同要求签订确认书的，签订确认书时合同成立...\n[dense, colbert]\n\n\n2\n0.20\n471\n二章 合同的订立\n第四百七十一条 当事人订立合同，可以采取要约、承诺方式或者其他方式。...\n[dense, colbert]\n\n\n3\n0.19\n493\n二章 合同的订立\n第四百九十三条 当事人采用合同书形式订立合同的，最后签名、盖章或者按指印的地点为合同成立的地...\n[dense, colbert]\n\n\n4\n0.15\n469\n二章 合同的订立\n第四百六十九条 当事人订立合同，可以采用书面形式、口头形式或者其他形式。 书面形式是合同书、...\n[colbert, dense]"
+  },
+  {
+    "objectID": "notebooks/03_Retrieval_Performance_Evaluation.html#evaluating-retrieval-pipelines-with-synthetic-questions",
+    "href": "notebooks/03_Retrieval_Performance_Evaluation.html#evaluating-retrieval-pipelines-with-synthetic-questions",
+    "title": "Retrieval Performance Evaluation",
+    "section": "3 Evaluating Retrieval Pipelines with Synthetic Questions",
+    "text": "3 Evaluating Retrieval Pipelines with Synthetic Questions\nThe generated synthetic dataset is used for systematic evaluation of retrieval performance in each stage:\n\nMulti-Channel Retrieval, combining dense semantic search, sparse lexical matching, and late-interaction models.\nGraph-Augmented Retrieval, with legal graph expansion.\nReranking, final ranking by applying a cross-encoder or LLM.\n\n\n\nDefine Retrieval Evaluation Metrics\nfrom collections import defaultdict\nfrom typing import Callable\nimport math\n\n\ndef _hit_ids(hits: List[RetrievalHit]) -&gt; List[str]:\n    # compare at article_id level for legal retrieval\n    out = []\n    for h in hits:\n        aid = str(getattr(h.chunk, \"article_id\", \"\") or \"\")\n        if aid:\n            out.append(aid)\n    return out\n\ndef hit_at_k(pred: List[str], gold: Set[str], k: int) -&gt; float:\n    top_hits = pred[:k]\n    return int(any(h.strip() in gold for h in top_hits))\n\ndef recall_at_k(pred: List[str], gold: Set[str], k: int) -&gt; float:\n    if not gold:\n        return 0.0\n    return len(set(pred[:k]) & gold) / len(gold)\n\ndef mrr_at_k(pred: List[str], gold: Set[str], k: int) -&gt; float:\n    for i, x in enumerate(pred[:k], start=1):\n        if x in gold:\n            return 1.0 / i\n    return 0.0\n\ndef ndcg_at_k(pred: List[str], gold: Set[str], k: int) -&gt; float:\n    # binary relevance\n    def dcg(xs: List[str]) -&gt; float:\n        s = 0.0\n        for i, x in enumerate(xs[:k], start=1):\n            rel = 1.0 if x in gold else 0.0\n            s += rel / math.log2(i + 1)\n        return s\n    ideal = dcg(list(gold))\n    if ideal &lt;= 1e-12:\n        return 0.0\n    return dcg(pred) / ideal\n\n\n\n\nEvaluate on the Systematic Dataset\nsubset = df_queries.sample(100, random_state=0).reset_index(drop=True)\n\nresults = []\nfor _, row in subset.iterrows():\n    out = evaluate_one(row[\"query\"], [row[\"article_id\"]], top_k=10)\n    results.append({\n        \"query\": row[\"query\"],\n        \"positives\": row[\"article_id\"],\n        \"hits\":  out[\"hits\"],\n        \"metrics\": out[\"metrics\"],\n    })\n\n\n\n\n\n\n\n  \n    \n      \n      R@5\n      R@10\n      MRR@10\n      nDCG@10\n      hit@3\n      hit@10\n        \n  \n    \n      fusion\n      0.82\n      0.85\n      0.650857\n      0.699083\n      0.70\n      0.85\n    \n    \n      hybrid\n      0.82\n      0.84\n      0.690524\n      0.727520\n      0.75\n      0.84\n    \n    \n      colbert\n      0.79\n      0.81\n      0.663024\n      0.699208\n      0.71\n      0.81\n    \n    \n      dense\n      0.66\n      0.75\n      0.528690\n      0.582100\n      0.60\n      0.75\n    \n    \n      bm25\n      0.52\n      0.57\n      0.443345\n      0.473788\n      0.49\n      0.57"
+  },
+  {
+    "objectID": "notebooks/03_Retrieval_Performance_Evaluation.html#key-observations",
+    "href": "notebooks/03_Retrieval_Performance_Evaluation.html#key-observations",
+    "title": "Retrieval Performance Evaluation",
+    "section": "4 Key observations",
+    "text": "4 Key observations\n\nNeural retrieval consistently outperforms lexical BM25. Both dense and ColBERT retrievers achieve substantial gains over BM25 across all metrics (e.g., R@10, MRR@10, nDCG@10), indicating that semantic matching is essential for legal queries with abstract or paraphrased formulations.\nLate-interaction retrieval (ColBERT) further improves ranking quality. Compared to standard dense retrieval, ColBERT yields higher nDCG@10 and hit@k scores, suggesting better fine-grained alignment between queries and statutory text.\nMulti-retriever fusion provides robust and consistent improvements. The fusion variant, which combines BM25, dense, and ColBERT retrieval results, achieves the strongest overall recall and ranking performance, benefiting from complementary retrieval signals.\nHybrid retrieval with augmentation and reranking achieves the best performance. The hybrid retriever—built on top of fusion and further enhanced with optional graph-based augmentation and reranking—consistently attains the highest scores across nearly all metrics. In particular, it shows clear gains over pure BM25 and pure dense retrieval, confirming the effectiveness of combining heterogeneous retrievers with structural and ranking enhancements.\n\nOverall, the results demonstrate that progressively enriched retrieval pipelines—from lexical to semantic, from single retriever to fused and augmented retrievers—lead to systematic and measurable improvements in legal retrieval quality."
+  },
+  {
+    "objectID": "docs/demo.html",
+    "href": "docs/demo.html",
+    "title": "",
+    "section": "",
+    "text": "Code"
+  },
+  {
+    "objectID": "index.html#what-is-legal-rag",
+    "href": "index.html#what-is-legal-rag",
+    "title": "Legal-RAG",
+    "section": "1 What is Legal-RAG?",
+    "text": "1 What is Legal-RAG?\nLegal-RAG is an open-source, end-to-end legal Retrieval-Augmented Generation (RAG) system centered on statutory text. It integrates hybrid retrieval, QueryType-aware routing, bounded graph-augmented context expansion, and provider-agnostic token streaming."
+  },
+  {
+    "objectID": "index.html#hugging-face-spaces-demo-online",
+    "href": "index.html#hugging-face-spaces-demo-online",
+    "title": "Legal-RAG",
+    "section": "2 🤗 Hugging Face Spaces Demo (Online)",
+    "text": "2 🤗 Hugging Face Spaces Demo (Online)\n👉 https://huggingface.co/spaces/flora-l/Legal-RAG\nNote: This Space does not currently have GPU resources enabled, so local Qwen models are unavailable. Please use an OpenAI model for answer generation with your OPENAI_API_KEY."
+  },
+  {
+    "objectID": "index.html#features",
+    "href": "index.html#features",
+    "title": "Legal-RAG",
+    "section": "3 Features",
+    "text": "3 Features\n\nLaw-aware RAG\n\nExplicit article-level chunking\nLaw-specific metadata (chapter / section / article number)\nRetrieval results are inspectable and auditable\nLanguage-aware corpus routing (zh/en)\n\n\n\nHybrid Retrieval\n\nDense retrieval: FAISS\nSparse retrieval: BM25\nColBERT (late interaction)\nWeighted fusion\n\n\n\nQuery Routing & Graph Awareness\n\nLightweight law_graph for structural reasoning\nRouter decides between:\n\npure retrieval\ngraph-assisted RAG\n\nClear extension point for richer legal knowledge graphs\n\n\n\nOnline PDF Ingestion (Incremental Indexing)\n\nUpload PDFs → parse → chunk → JSONL\nIncremental FAISS add\nBM25 rebuild in background"
+  },
+  {
+    "objectID": "index.html#system-architecture",
+    "href": "index.html#system-architecture",
+    "title": "Legal-RAG",
+    "section": "4 System Architecture",
+    "text": "4 System Architecture\nThe system is organized into four clearly separated layers:\n\nOffline Build Law text preprocessing, index construction, graph building\nIndex Artifacts FAISS, BM25, and law_graph as immutable read models\nOnline Ingestion PDF upload → background incremental indexing\nOnline Serving (RAG + Routing) FastAPI + RagPipeline + Router + LLM\n\nSee the architecture diagram for the full data flow."
+  },
+  {
+    "objectID": "index.html#quickstart-local",
+    "href": "index.html#quickstart-local",
+    "title": "Legal-RAG",
+    "section": "5 Quickstart (Local)",
+    "text": "5 Quickstart (Local)\n\n1. Clone & install\ngit clone https://github.com/Fan-Luo/Legal-RAG.git\ncd Legal-RAG\npip install -r requirements.txt\n\n\n2. Prepare law data & build index\nThe default corpus includes:\n\nChinese: PRC Civil Code\nEnglish: Uniform Commercial Code (UCC)\n\nQueries are routed to language-specific corpora and indexes.\n# preprocess law text into structured JSONL\npython -m scripts.preprocess_law\n\n# build FAISS + BM25 indexes\npython -m scripts.build_index\n\n# build law_graph\npython -m scripts.build_graph\nArtifacts are generated per language:\n\ndata/processed/law_zh.jsonl, data/processed/law_en.jsonl\ndata/index/zh/..., data/index/en/...\ndata/graph/law_graph_zh.jsonl, data/graph/law_graph_en.jsonl\n\n\n\n3. Start API service\npython -m uvicorn legalrag.api.server:app --host 127.0.0.1 --port 8000 \n\n\n4. Launch Demo\nvisit http://127.0.0.1:8000/ or http://127.0.0.1:8000/ui/"
+  },
+  {
+    "objectID": "index.html#example",
+    "href": "index.html#example",
+    "title": "Legal-RAG",
+    "section": "6 Example",
+    "text": "6 Example\nfrom legalrag.config import AppConfig\nfrom legalrag.pipeline.rag_pipeline import RagPipeline\n\ncfg = AppConfig.load()\npipeline = RagPipeline(cfg)\n\nquestion = \"What standards must goods satisfy to be merchantable？\"\nans = pipeline.answer(question)\n\nprint(ans.answer)"
+  },
+  {
+    "objectID": "index.html#llm-backends-cost-model",
+    "href": "index.html#llm-backends-cost-model",
+    "title": "Legal-RAG",
+    "section": "7 LLM Backends & Cost Model",
+    "text": "7 LLM Backends & Cost Model\nSupported backends:\n\nLocal LLM (Qwen series, need GPU and enough memory)\nOpenAI-compatible API (need to provide OpenAI API key)\n\nNo API key is collected via UI\nLLM keys are read only from environment variables Note: If no key is provided and no local model loaded, the system gracefully degrades"
+  },
+  {
+    "objectID": "index.html#project-structure",
+    "href": "index.html#project-structure",
+    "title": "Legal-RAG",
+    "section": "8 Project Structure",
+    "text": "8 Project Structure\nLegal-RAG/\n│\n├── legalrag/\n│   ├── __init__.py\n│   ├── config.py                   \n│   ├── schemas.py                 # LawChunk / RetrievalHit / RoutingDecision / RagAnswer\n│   ├── llm/\n│   │   ├── __init__.py\n│   │   ├── gateway.py\n│   │   └── client.py              # Qwen / OpenAI LLMClient \n│   │\n│   ├── routing/\n│   │   ├── __init__.py\n│   │   ├── legal_issue_extractor.py\n│   │   └── router.py              # QueryType + Graph/RAG Suggestions\n│   │\n│   ├── retrieval/\n│   │   ├── __init__.py\n│   │   ├── builders\n│   │   ├── dense_retriever.py     # Dense (BGE + FAISS)\n│   │   ├── vector_store.py        \n│   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)\n│   │   ├── colbert_retriever.py\n│   │   ├── hybrid_retriever.py    # Dense + Sparse + Colbert + Graph + Rerank\n│   │   ├── by_lang_retriever.py   # zh/en routing\n│   │   ├── corpus_loader.py       # read all chunks from processed_dir\n│   │   ├── incremental_indexer.py\n│   │   ├── graph_retriever.py\n│   │   ├── graph_store.py         # law_graph / legal_kg  \n│   │   └── rerankers.py\n│   │\n│   ├── pdf/\n│   │   ├── __init__.py\n│   │   └── parser.py              # pdfplumber + OCR fallback\n│   │\n│   ├── ingest/\n│   │   ├── __init__.py\n│   │   ├── orchestrator.py\n│   │   ├── service.py\n│   │   ├── task_queue.py\n│   │   └── ingestor.py            # PDFIngestor \n│   │\n│   ├── pipeline/\n│   │   ├── __init__.py\n│   │   └── rag_pipeline.py        # Graph-aware RAG Core Inference\n│   │\n│   ├── prompts/\n│   │   ├── prompt_zh.json         # Chinese prompt\n│   │   └── prompt_en.json         # English prompt\n│   │\n│   ├── utils/\n│   │   ├── __init__.py\n│   │   ├── lang.py\n│   │   ├── logger.py             \n│   │   └── text.py                \n│   │\n│   └── api/\n│       ├── __init__.py\n│       └── server.py              # FastAPI（/rag/retrieve, /rag/answer, /ingest/pdf）\n│\n├── ui/\n│   ├── index.html\n│   └── demo.qmd\n│\n├── scripts/\n│   ├── preprocess_law.py          # parse law → LawChunk JSONL\n│   ├── build_index.py             # FAISS + BM25 + Colbert indexes\n│   ├── build_graph.py             # law_graph / legal_kg  \n│   ├── bgenerate_synthetic_data.py\n│   └── evaluate_retrieval.py      # Hit@K / MRR / nDCG\n│\n├── notebooks/\n│   ├── 01_Launch_the_UI.ipynb\n│   ├── 02_LegalRAG_Pipeline.ipynb\n│   ├── 03_Retrieval_Performance_Evaluation.ipynb\n│   └── 04_Law_Graph_Visualization.ipynb\n│\n├── data/\n│   ├── raw/                         \n│   │   ├── minfadian.txt            \n│   │   └── ucc/                    \n│   ├── processed/                 # law_zh.jsonl / law_en.jsonl\n│   ├── index/                     # faiss/bm25/colbert per language\n│   └── graph/                     # law_graph_zh.jsonl / law_graph_en.jsonl\n│   └── eval/\n│       \n├── docs/\n│   ├── architecture.mmd\n│   └── architecture.png\n│ \n├── tests/\n│   ├── test_router.py\n│   └── test_retrieval.py\n│ \n├── README.md\n├── README-zh.md\n├── LICENSE\n├── pyproject.toml\n├── requirements.txt\n├── _quarto.yml\n├── index..qmd\n├── app.py                           # Hugging Face Space entry\n├── Dockerfile\n└── .gitignore"
+  },
+  {
+    "objectID": "index.html#who-is-this-project-for",
+    "href": "index.html#who-is-this-project-for",
+    "title": "Legal-RAG",
+    "section": "9 Who is this project for?",
+    "text": "9 Who is this project for?\nThis repository is intended for:\n\nEngineers exploring RAG system design\nResearchers working on legal NLP / AI + law\nPractitioners interested in traceable AI systems\nCandidates demonstrating architecture-level thinking\n\n\n⚠️ This project provides legal information assistance for educational and research purposes only and does not constitute legal advice. Users should not rely on this project as a substitute for professional legal counsel. The authors and contributors disclaim any liability for any direct or indirect consequences arising from the use of this project."
+  },
+  {
+    "objectID": "index.html#extensibility",
+    "href": "index.html#extensibility",
+    "title": "Legal-RAG",
+    "section": "10 Extensibility",
+    "text": "10 Extensibility\nLegal-RAG is intentionally structured to support:\n\nricher legal knowledge graphs\nmulti-document reasoning\nmulti-tenant isolation\nBYOK (Bring Your Own Key) SaaS models\n\nThese are architectural affordances, not product promises."
+  },
+  {
+    "objectID": "index.html#license",
+    "href": "index.html#license",
+    "title": "Legal-RAG",
+    "section": "11 License",
+    "text": "11 License\nApache License 2.0\nThis repository contains source code only. Users are responsible for complying with the licenses of any models or APIs they choose to integrate."
+  },
+  {
+    "objectID": "notebooks/04_Law_Graph_Visualization.html",
+    "href": "notebooks/04_Law_Graph_Visualization.html",
+    "title": "Law Graph Visualization",
+    "section": "",
+    "text": "This notebook presents an interactive visualization of the legal knowledge graph.\nThe graph makes explicit the structural relationships between statutory provisions that are otherwise difficult to observe through text-only retrieval.\nThis visualization serves both as a diagnostic tool and as an explanatory aid for understanding how graph enhancement influences retrieval and downstream answer generation."
+  },
+  {
+    "objectID": "notebooks/04_Law_Graph_Visualization.html#build-and-load-the-graph",
+    "href": "notebooks/04_Law_Graph_Visualization.html#build-and-load-the-graph",
+    "title": "Law Graph Visualization",
+    "section": "1 Build and Load the Graph",
+    "text": "1 Build and Load the Graph\nAfter pull the project source code, the preprocessing stage constructs a legal knowledge graph to capture structural relationships:\ngit clone https://github.com/Fan-Luo/Legal-RAG.git\npip install -e .\npython -m scripts.preprocess_law\npython -m scripts.build_graph"
+  },
+  {
+    "objectID": "notebooks/04_Law_Graph_Visualization.html#what-this-graph-represents",
+    "href": "notebooks/04_Law_Graph_Visualization.html#what-this-graph-represents",
+    "title": "Law Graph Visualization",
+    "section": "2 What This Graph Represents",
+    "text": "2 What This Graph Represents\nNodes correspond to individual legal provisions (e.g., articles or clauses).\nEdges encode structural relationships, capturing referential and contextual dependencies among laws.\nThe graph is constructed offline from preprocessed legal texts and stored as a static HTML artifact for reproducible inspection.\n\nfrom legalrag.config import AppConfig\nfrom legalrag.retrieval.graph_store import LawGraphStore\n\ncfg = AppConfig.load(None)\nstore = LawGraphStore(cfg)\n\n\n\n[Graph] Loaded 1260 law nodes\n[Graph] Built adjacency: 2640 edges\n\n\n\n\nExample graph node:\n  Article ID   : 142\n  Article No   : 第一百四十二条\n  Law          : 中华人民共和国民法典\n  Chapter      : 六章 民事法律行为\n  Section      : 三节 民事法律行为的效力\n\n  Neighbors:\n    -  141 | rel=prev   | conf=1.00 | evidence=None\n    -  143 | rel=next   | conf=1.00 | evidence=None\n    -  466 | rel=cited  | conf=0.90 | evidence={'span': [30, 37], 'text': '第一百四十二条'}"
+  },
+  {
+    "objectID": "notebooks/04_Law_Graph_Visualization.html#graph-walk-retrieval",
+    "href": "notebooks/04_Law_Graph_Visualization.html#graph-walk-retrieval",
+    "title": "Law Graph Visualization",
+    "section": "3 Graph Walk Retrieval",
+    "text": "3 Graph Walk Retrieval\nGraph-based expansion performs a bounded breadth-first search (BFS) over the legal knowledge graph, starting from one or more seed articles. The goal is to retrieve a localized subgraph centered on the query nodes, while allowing fine-grained control over relation types, confidence thresholds, and the total number of returned nodes. The resulting nodes are used to induce a subgraph for visualization or downstream analysis.\n\nstart_ids = [\"582\"]\nlaw_nodes = store.walk(start_ids, limit = 30)\nnode_ids = [node.article_id for node in law_nodes] + start_ids"
+  },
+  {
+    "objectID": "notebooks/04_Law_Graph_Visualization.html#visualizing-the-legal-knowledge-graph",
+    "href": "notebooks/04_Law_Graph_Visualization.html#visualizing-the-legal-knowledge-graph",
+    "title": "Law Graph Visualization",
+    "section": "4 Visualizing the Legal Knowledge Graph",
+    "text": "4 Visualizing the Legal Knowledge Graph\nThis section visualizes the full legal knowledge graph as an interactive network to facilitate inspection and analysis of structural relationships between legal articles. Nodes represent individual law articles, while directed edges encode relational links such as sequential ordering, citations, or doctrinal dependencies.\nThis visualization complements quantitative retrieval metrics by providing a qualitative view of legal structure and coverage."
+  },
+  {
+    "objectID": "notebooks/01_Launch_the_UI.html",
+    "href": "notebooks/01_Launch_the_UI.html",
+    "title": "Launch the UI",
+    "section": "",
+    "text": "🚀 Launch the server locally and explore the interactive UI to query legal provisions and get evidence-backed results instantly!"
+  },
+  {
+    "objectID": "notebooks/01_Launch_the_UI.html#repository-clone-and-setup",
+    "href": "notebooks/01_Launch_the_UI.html#repository-clone-and-setup",
+    "title": "Launch the UI",
+    "section": "1 Repository Clone and Setup",
+    "text": "1 Repository Clone and Setup\nFirst, pull the project source code, initialize the execution environment, and run the data preprocessing.\n\n!git clone https://github.com/Fan-Luo/Legal-RAG.git\n%cd Legal-RAG\n!python -m scripts.setup"
+  },
+  {
+    "objectID": "notebooks/01_Launch_the_UI.html#start-the-local-legalrag-api-server",
+    "href": "notebooks/01_Launch_the_UI.html#start-the-local-legalrag-api-server",
+    "title": "Launch the UI",
+    "section": "2 Start the local LegalRAG API server",
+    "text": "2 Start the local LegalRAG API server\n\nimport os, time, subprocess, requests\nfrom legalrag.config import AppConfig\ncfg = AppConfig.load(None)\nPORT = 7900\n\nenv = {\n    **os.environ,\n    \"PORT\": str(PORT),\n    cfg.llm.qwen_model_env: \"Qwen/Qwen2.5-3B-Instruct\",  \n}\n\nuv = subprocess.Popen(\n    [\"python\", \"-m\", \"uvicorn\", \"legalrag.api.server:app\",\n     \"--host\", \"0.0.0.0\", \"--port\", str(PORT), \"--log-level\", \"info\"],\n    env=env,\n    stdout=subprocess.PIPE,\n    stderr=subprocess.STDOUT,\n    text=True,\n    bufsize=1\n)\n\nThe server listens on a local port and handles incoming requests for retrieval and answer legal generation."
+  },
+  {
+    "objectID": "notebooks/01_Launch_the_UI.html#expose-the-service-via-a-public-tunnel",
+    "href": "notebooks/01_Launch_the_UI.html#expose-the-service-via-a-public-tunnel",
+    "title": "Launch the UI",
+    "section": "3 Expose the Service via a Public Tunnel",
+    "text": "3 Expose the Service via a Public Tunnel\nWith a Cloudflare Tunnel, the locally running LegalRAG service can be accessible via a public endpoint. The process involves launching the cloudflared subprocess to create a secure tunnel, capturing the temporary public URL generated by the tunnel, and ensuring the local service is fully initialized before it becomes publicly reachable.\n\n\nStarts a Cloudflare Tunnel for the local service\nproc = subprocess.Popen(\n    [\"./cloudflared\", \"tunnel\", \"--url\", f\"http://127.0.0.1:{PORT}\", \"--no-autoupdate\"],\n    stdout=subprocess.PIPE,\n    stderr=subprocess.STDOUT,\n    text=True,\n)\n\nthreading.Thread(\n    target=stream_logs,\n    args=(proc, logger),\n    daemon=True,\n).start()\n\nif not url_ready.wait(timeout=60):\n    raise RuntimeError(\"Failed to obtain Cloudflare Tunnel URL\")\n\n\n\n\nWaits for server warm-up before exposing the endpoint\nready = False\nfor _ in range(1000):\n    try:\n        r = requests.get(f\"http://127.0.0.1:{PORT}/ready\").json()\n        if r.get(\"warmup_done\"):\n            ready = True\n            break\n    except Exception:\n        pass\n    time.sleep(3)\n\nif not ready:\n    raise RuntimeError(\"Server not ready after warmup\")\n\nprint(\"Public URL:\", public_url)"
+  },
+  {
+    "objectID": "notebooks/01_Launch_the_UI.html#interactive-ui-overview",
+    "href": "notebooks/01_Launch_the_UI.html#interactive-ui-overview",
+    "title": "Launch the UI",
+    "section": "4 Interactive UI Overview",
+    "text": "4 Interactive UI Overview\nThrough this UI, users can submit queries, visualize retrieved legal provisions, obtain evidence-grounded results, and upload additional reliable legal corpora."
+  }
+]

@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Legal-RAG</title>
+    <style>
+      .muted{ color: var(--muted); font-size: 13px; }
+      .row{ display:flex; }
+
+      :root{
+        --bg: #f6f7fb;
+        --surface: #ffffff;
+        --text: #0f172a;
+        --muted: #64748b;
+        --border: #e5e7eb;
+        --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+        --accent: #2563eb;
+        --accent-weak: rgba(37,99,235,.12);
+        --radius: 16px;
+        --radius-sm: 12px;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+
+      *{ box-sizing: border-box; }
+      html, body { height: 100%; }
+      body{
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--text);
+        background: radial-gradient(1200px 800px at 10% 10%, #eef2ff 0%, rgba(238,242,255,0) 55%),
+                    radial-gradient(900px 700px at 90% 0%, #ecfeff 0%, rgba(236,254,255,0) 45%),
+                    var(--bg);
+      }
+
+      .app{
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(520px, 1fr) 420px;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      @media (max-width: 980px){
+        .app{ grid-template-columns: 1fr; }
+        .side{ order: 2; }
+        .chat{ order: 1; }
+      }
+
+      /* ---------- Cards ---------- */
+      .card{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .card-header{
+        padding: 18px 18px 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .card-title{
+        font-size: 16px;
+        font-weight: 750;
+        letter-spacing: -0.02em;
+      }
+
+      .card-subtitle{
+        padding: 0 18px 12px 18px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .card-body{
+        padding: 16px 18px 18px 18px;
+      }
+
+      .card-summary{
+        list-style: none;
+        cursor: pointer;
+        padding: 18px;
+        font-size: 16px;
+        font-weight: 750;
+        border-bottom: 1px solid var(--border);
+      }
+      details.card > summary::-webkit-details-marker{ display: none; }
+
+      .divider{
+        height: 1px;
+        background: var(--border);
+        margin: 14px 0;
+      }
+
+      .no-link {
+        color: inherit; /* Makes the link inherit the color of its parent (text color) */
+      }
+      
+      /* ---------- Chat ---------- */
+      .chat{
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        gap: 12px;
+      }
+
+      .topbar{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 12px 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .brand{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .logo{
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        font-weight: 900;
+      }
+
+      .brand-text .title{
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.1;
+      }
+      .brand-text .subtitle{
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .topbar-actions{
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      /* 新增语言切换按钮样式 */
+      .lang-switch {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        user-select: none;
+      }
+      .lang-switch .active {
+        color: var(--accent);
+      }
+
+      .chat-list{
+        flex: 1;
+        min-height: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 16px;
+        overflow: auto;
+      }
+
+      .msg{
+        display: flex;
+        margin: 10px 0;
+      }
+      .msg.user{ justify-content: flex-end; }
+      .msg.assistant{ justify-content: flex-start; }
+
+      .bubble{
+        max-width: 78%;
+        border-radius: 18px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+
+      .sec{
+        margin: 18px 0;
+        padding-left: 14px;
+      }
+
+      .sec-title{
+        font-weight: 750;
+        margin-bottom: 6px;
+      }
+
+      .sec-list{
+        margin: 0 0 0 18px;
+        padding-left: 18px;
+      }
+      .sec-list li{
+        margin: 10px 0;
+      }
+      .sec-list.single{
+        list-style: none;
+        padding-left: 0;
+        margin-left: 18px;
+      }
+      .quotation{
+        display: block;
+        color: #475569;
+        font-style: italic;
+        margin-bottom: .5em;
+      }
+      .msg.user .bubble{
+        background: #f1f5ff;
+        border-color: rgba(37,99,235,.25);
+      }
+      .role{
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .content{
+        font-size: 14.5px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* ---------- Composer ---------- */
+      .composer{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 12px;
+      }
+
+      .composer-inner{
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: end;
+      }
+
+      .composer-input{
+        width: 100%;
+        resize: none;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 12px 12px;
+        font-size: 14.5px;
+        line-height: 1.45;
+        outline: none;
+      }
+      .composer-input:focus{
+        border-color: rgba(37,99,235,.55);
+        box-shadow: 0 0 0 4px var(--accent-weak);
+      }
+
+      .composer-actions{
+        display: flex;
+        gap: 10px;
+      }
+
+      .composer-hint{
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      /* ---------- Buttons ---------- */
+      .btn{
+        height: 40px;
+        padding: 0 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      .btn:disabled{
+        opacity: .6;
+        cursor: not-allowed;
+      }
+      .btn-primary{
+        background: var(--accent);
+        border-color: rgba(37,99,235,.85);
+        color: #fff;
+      }
+      .btn-primary:hover{ filter: brightness(.98); }
+      .btn-ghost{
+        background: #fff;
+      }
+      .btn-ghost:hover{
+        background: #f8fafc;
+      }
+
+      /* ---------- Sidebar ---------- */
+      .side{
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        gap: 16px;
+      }
+
+      /* ---------- Evidence (two-stage UX) ---------- */
+      .evidence-toggle-btn{
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: none;
+        background: none;
+        box-shadow: none;
+        cursor: pointer;
+        font-weight: 800;
+        color: var(--text);
+        user-select: none;
+      }
+      .chev{
+        width: 18px;
+        height: 18px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 17pt;
+        font-weight: 900;
+        line-height: 1;
+      }
+      .evidence-body{
+        padding: 0 18px 18px 18px;
+      }
+      .evidence-body.collapsed{
+        display: none;
+      }
+
+      .evidence-list{
+        border: None;
+        padding: 10px;
+        max-height: 52vh;
+        overflow: auto;
+        background: #fff;
+      }
+
+      .evi{
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #fff;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+
+      .evi-sum{
+        cursor: pointer;
+        list-style: none;
+        padding: 14px 14px;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 10px;
+        font-weight: 800;
+        border-radius: 14px;
+      }
+      .evi-sum::-webkit-details-marker{ display: none; }
+
+      .evi-sum::before{
+        content: "▸";
+        margin-right: 5px;
+        color: var(--accent);
+        font-weight: 900;
+      }
+      .evi[open] .evi-sum::before{ content: "▾"; }
+
+      .evi-left{
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 15px;
+        width: 100%;
+      }
+
+      .evi-right{
+        color: var(--muted);
+        align-items: center;
+        font-weight: 750;
+        font-size: 15px;
+        white-space: nowrap;
+      }
+
+      .evi-body{
+        padding: 12px 14px 14px 14px;
+        border-top: 1px solid var(--border);
+        max-height: 220px;
+        overflow: auto;
+      }
+
+      .evi-text{
+        font-size: 14.5px;
+        line-height: 1.65;
+        color: var(--text);
+      }
+
+      /* Controls fields */
+      .field{
+        display: grid;
+        gap: 10px;
+      }
+      .field label{
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .pill{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-weight: 800;
+        font-size: 12px;
+        background: #fff;
+        font-family: var(--mono);
+      }
+
+      /* 小屏：确保侧边栏卡片内容始终可见 */
+      @media (max-width: 980px) {
+        .side {
+          min-height: auto;          /* 取消 min-height: 0 的收缩限制 */
+          overflow-y: auto;          /* 如果内容太长允许滚动 */
+          padding-bottom: 20px;      /* 给底部留点空间，避免粘底 */
+        }
+
+        .card {
+          min-height: auto;          /* 确保卡片能撑开 */
+          overflow: visible;         /* 防止内容被隐藏 */
+        }
+
+        .card-body {
+          min-height: 80px;          /* 给 card-body 最小高度，避免被压扁 */
+          display: flex;
+          flex-direction: column;
+          gap: 12px;                 /* 内部元素间距更清晰 */
+        }
+
+        /* 特别针对 OpenAI Key 那行，确保 row 始终显示 */
+        .card-body .row {
+          flex-shrink: 0;            /* 不允许这行被压缩 */
+          min-height: 50px;
+          align-items: center;
+        }
+
+        /* Upload PDF 的 details 内容也确保可见 */
+        details.card[open] .card-body {
+          min-height: 120px;
+        }
+
+        .app {
+          grid-template-rows: 1fr auto;  /* 聊天区占主要高度，侧边栏自适应 */
+          height: 100vh;
+          height: 100dvh;                /* 兼容移动端动态高度 */
+        }
+
+        .chat {
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .side {
+          max-height: 50vh;              /* 限制侧边栏最大高度 */
+          overflow-y: auto;              /* 内容多时可滚动 */
+        }
+      }
+
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- Left: Chat -->
+      <section class="chat">
+        <header class="topbar">
+          <div class="brand">
+            <div class="logo">L</div>
+            <div class="brand-text">
+              <div class="title">Legal-RAG</div>
+              <div class="subtitle" data-i18n="subtitle">Contract Law · RAG</div>
+            </div>
+          </div>
+
+          <div class="topbar-actions">
+            <!-- 语言切换按钮 -->
+            <div id="langSwitch" class="lang-switch" role="button" aria-label="Switch language">
+              <span class="lang-en">EN</span>
+              <span>/</span>
+              <span class="lang-zh">中</span>
+            </div>
+
+            <button id="newChatBtn" class="btn btn-ghost" type="button" data-i18n="newChat">New chat</button>
+          </div>
+        </header>
+
+        <div id="chatList" class="chat-list" aria-live="polite"></div>
+
+        <form id="chatForm" class="composer" autocomplete="off">
+          <div class="composer-inner">
+            <textarea
+              id="question"
+              class="composer-input"
+              rows="2"
+            ></textarea>
+            <div class="composer-actions">
+              <button id="sendBtn" class="btn btn-primary" type="submit" data-i18n="send">Send</button>
+              <button id="clearBtn" class="btn btn-ghost" type="button" data-i18n="clear">Clear</button>
+            </div>
+          </div>
+          <div class="composer-hint" id="disclaimer"></div>
+        </form>
+      </section>
+
+      <!-- Right: Sidebar -->
+      <aside class="side">
+        <!-- Evidence -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title" data-i18n="evidences">Evidences</div>
+
+            <button id="evidenceToggle" class="evidence-toggle-btn" type="button" aria-expanded="false">
+              <!-- <span id="evidenceToggleText" data-i18n="expand">Expand</span> -->
+              <span class="chev" aria-hidden="true">▾</span>
+            </button>
+          </div>
+
+          <div id="evidenceHint" class="card-subtitle" data-i18n="askHint">Ask a question to see citations.</div>
+
+          <div id="evidenceBody" class="evidence-body collapsed">
+            <div id="evidenceList" class="evidence-list"></div>
+          </div>
+        </div>
+
+        <!-- Upload -->
+        <details class="card" open>
+          <summary class="card-summary" data-i18n="uploadPdf">Upload PDF</summary>
+          <div class="card-body">
+            <div class="field">
+              <div class="card-subtitle" style="margin: 0; padding: 0;" data-i18n="uploadDesc">
+                Upload a PDF to extend corpus
+              </div>
+
+              <div style="margin-top: 8px;">
+                <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                  <input id="pdfFile" type="file" accept="application/pdf" style="display: none;" />
+                  <span id="fileButtonText" class="btn btn-ghost" data-i18n="chooseFile" style="display:flex; align-items:center; gap:10px;">Choose File</span>
+                </label>
+                <span id="fileNameDisplay" style="margin-left: 12px; color: var(--muted);"></span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:10px; margin-top: 6px;">
+                <span id="pdfHint" style="display:none; color:red; font-size:12pt; padding-bottom: 2px;" data-i18n="maxSize">Max 10MB</span>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top: 12px;">
+              <button id="uploadBtn" class="btn" type="button" data-i18n="upload">Upload</button>
+              <button id="clearUploadBtn" class="btn btn-ghost" type="button" data-i18n="clearUpload">Clear</button>
+            </div>
+
+            <div class="field" style="margin-top:12px;">
+              <div id="uploadStatus" class="muted" style="white-space:pre-wrap;"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- OpenAI API Key -->
+        <div class="card">
+          <div class="card-body">
+            <div class="row" style="gap:5px; align-items:center; margin-bottom: 12px;">
+              <label style="min-width:130px; font-weight:700" data-i18n="apiKeyLabel">OpenAI API Key</label>
+              <input id="openaiKey" type="password" placeholder="sk-..." style="flex:1;" />
+              <button id="saveKeyBtn" type="button" data-i18n="saveKey">Save</button>
+              <button id="clearKeyBtn" type="button" data-i18n="clearKey">Clear</button>
+            </div>
+
+            <div class="muted" id="apiKeyHint" style="line-height:1.4;">
+              <!-- 内容由 JS 动态填充 -->
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <script>
+      // ==================== 多语言支持 ====================
+      const translations = {
+        en: {
+          subtitle: "Trustworthy legal guidance backed by verifiable legal sources",
+          newChat: "New chat",
+          send: "Send",
+          clear: "Clear",
+          evidences: "Evidences",
+          expand: "Expand",
+          collapse: "Collapse",
+          askHint: "Ask a question to see citations.",
+          noCitations: "No citations returned.",
+          searching: "Searching citations…",
+          generating: "Generating answer…",
+          thinking: "Thinking…",
+          uploadPdf: "Upload PDF",
+          uploadDesc: "Upload a PDF to extend corpus",
+          uploadNoFile: "Please choose a PDF file.",
+          uploadPdfOnly: "Only PDF files are supported.",
+          uploadFailed: "Upload failed:",
+          uploading: "Uploading:",
+          maxSize: "Max 10MB",
+          upload: "Upload",
+          clearUpload: "Clear",
+          indexingScheduled: "Indexing scheduled.",
+          indexError: "Index error",
+          indexReady: "Index ready.",
+          referencesTitle: "Referenced Provisions",
+          disclaimer: "Disclaimer: Provided for informational purposes only; not a substitute for professional legal counsel.",
+          placeholder: "Type your legal question… ",
+          chooseFile: "Choose File",
+          noFileChosen: "No file chosen",
+          apiKeyLabel: "OpenAI API Key",
+          saveKey: "Save",
+          clearKey: "Clear",
+          apiKeyHint: "Please provide your OpenAI key to enable answers.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session."
+        },
+        zh: {
+          subtitle: "基于可核查法律来源的法律助手",
+          newChat: "新对话",
+          send: "发送",
+          clear: "清空",
+          evidences: "法律依据",
+          expand: "展开",
+          collapse: "收起",
+          askHint: "提出问题后可查看相关法律依据",
+          noCitations: "未返回依据。",
+          searching: "正在检索依据…",
+          generating: "正在生成答案…",
+          thinking: "思考中…",
+          uploadPdf: "上传 PDF",
+          uploadDesc: "上传 PDF 扩展语料",
+          uploadNoFile: "请选择一个 PDF 文件",
+          uploadPdfOnly: "仅支持 PDF 文件",
+          uploadFailed: "上传失败：",
+          uploading: "正在上传：",
+          maxSize: "最大 10MB",
+          upload: "上传",
+          clearUpload: "清除",
+          indexingScheduled: "索引任务已安排",
+          indexError: "索引错误",
+          indexReady: "索引已完成",
+          referencesTitle: "参考条文列表",
+          disclaimer: "免责声明：仅供参考，不构成法律意见。请结合具体事实与完整条文判断。",
+          placeholder: "输入你的法律问题…",
+          chooseFile: "选择文件",
+          noFileChosen: "未选择任何文件",
+          apiKeyLabel: "OpenAI API Key",
+          saveKey: "保存",
+          clearKey: "清除",
+          apiKeyHint: "需提供 OpenAI API Key 才能正常回答。\n请从 <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a> 获取密钥。\n密钥仅保存在您当前浏览器会话中，不会上传。"
+        }
+      };
+
+      let currentLang = navigator.language.startsWith('zh') ? 'zh' : 'en';
+
+      function applyLanguage(lang) {
+        currentLang = lang;
+
+        // 更新所有 data-i18n 元素
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.dataset.i18n;
+          if (translations[lang][key]) {
+            el.textContent = translations[lang][key];
+          }
+        });
+
+        // placeholder
+        questionInput.placeholder = translations[lang].placeholder;
+
+        // 免责声明
+        disclaimer.innerHTML = translations[lang].disclaimer.replace('\n', '<br />');
+
+        // 语言按钮高亮
+        document.querySelector('.lang-en').classList.toggle('active', lang === 'en');
+        document.querySelector('.lang-zh').classList.toggle('active', lang === 'zh');
+
+        // 展开/收起按钮
+        const isOpen = !evidenceBody.classList.contains("collapsed");
+        // evidenceToggleText.textContent = isOpen ? translations[lang].collapse : translations[lang].expand;
+
+        // Send 按钮状态文字
+        sendBtn.textContent = state.busy ? translations[lang].thinking : translations[lang].send;
+
+        // 文件选择按钮文字
+          fileButtonText.textContent = translations[lang].chooseFile;
+
+          // 当前文件名显示（如果有文件）
+          if (pdfFile.files.length > 0) {
+            fileNameDisplay.textContent = pdfFile.files[0].name;
+          } 
+
+          // OpenAI API Key 说明文字
+          apiKeyHint.innerHTML = translations[lang].apiKeyHint.replace(/\n/g, '<br />');
+
+      }
+
+      // 语言切换事件
+      document.getElementById('langSwitch').addEventListener('click', () => {
+        const newLang = currentLang === 'en' ? 'zh' : 'en';
+        applyLanguage(newLang);
+      });
+
+
+      const $ = (sel) => document.querySelector(sel);
+
+      const chatList = $("#chatList");
+      const chatForm = $("#chatForm");
+      const questionInput = $("#question");
+      const sendBtn = $("#sendBtn");
+      const clearBtn = $("#clearBtn");
+      const newChatBtn = $("#newChatBtn");
+      const disclaimer = $("#disclaimer");
+
+      // Evidence
+      const evidenceToggle = $("#evidenceToggle");
+      const evidenceToggleText = $("#evidenceToggleText");
+      const evidenceToggleIcon = evidenceToggle?.querySelector(".chev");
+      const evidenceHint = $("#evidenceHint");
+      const evidenceBody = $("#evidenceBody");
+      const evidenceList = $("#evidenceList");
+
+      const uploadBtn = $("#uploadBtn");
+      const clearUploadBtn = $("#clearUploadBtn");
+      const uploadStatus = $("#uploadStatus");
+
+      const pdfHint = $("#pdfHint");
+      const pdfFile = $("#pdfFile");
+
+      const openaiKeyInput = $("#openaiKey");
+      const saveKeyBtn = $("#saveKeyBtn");
+      const clearKeyBtn = $("#clearKeyBtn");
+      const KEY_STORAGE = "legalrag_openai_api_key";
+
+      const state = { busy: false, hasAsked: false };
+
+      const MAX_MB = 10;
+      const MAX_BYTES = MAX_MB * 1024 * 1024;
+      const fileButtonText = $("#fileButtonText");
+      const fileNameDisplay = $("#fileNameDisplay");
+      const apiKeyHint = $("#apiKeyHint");
+
+      // restore key
+      try {
+        const saved = sessionStorage.getItem(KEY_STORAGE);
+        if (saved && openaiKeyInput) openaiKeyInput.value = saved;
+      } catch (e) {}
+
+      function escapeHtml(s) {
+        return String(s ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+
+
+      function smartParagraphForDisplay(text) {
+        // Keep code fences stable: if inside ``` fence, do not auto-insert blank lines.
+        const fenceCount = (String(text).match(/```/g) || []).length;
+        const inFence = fenceCount % 2 === 1;
+        if (inFence) return String(text);
+
+        const s = String(text);
+
+        // Respect model-provided paragraphs
+        if (s.includes("\n\n")) return s;
+
+        // Only apply when text is long enough (avoid jitter early)
+        if (s.length < 220) return s;
+
+        // Insert paragraph breaks after sentence-ending punctuation (CN/EN)
+        return s
+          .replace(/([。！？\.!\?])([ \t]*)(?!\n)/g, "$1\n\n")
+          .replace(/\n{3,}/g, "\n\n");
+      }
+
+      function addAssistantPlaceholder() {
+        const el = document.createElement("div");
+        el.className = "msg assistant";
+        el.innerHTML = `
+          <div class="bubble">
+            <div class="role">Assistant</div>
+            <div class="content"></div>
+          </div>
+        `;
+        chatList.appendChild(el);
+        scrollChatToBottom();
+        return el.querySelector(".content");
+      }
+
+      function setBubbleContentText(contentEl, text) {
+        // Streaming stage: escape + preserve newlines.
+        const safe = escapeHtml(text).replaceAll("\n", "<br/>");
+        contentEl.innerHTML = safe;
+      }
+
+      function setBubbleContentHtml(contentEl, html) {
+        contentEl.innerHTML = html;
+      }
+
+      function tryParseJson(text) {
+        if (!text) return null;
+        let t = text.trim();
+        if (t.startsWith("```")) {
+          t = t.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+        }
+        try { return JSON.parse(t); } catch (e) {}
+        const start = t.indexOf("{");
+        const end = t.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+          const candidate = t.slice(start, end + 1);
+          try { return JSON.parse(candidate); } catch (e) {
+            console.debug("[ui] JSON parse failed", e);
+            return null;
+          }
+        }
+        console.debug("[ui] JSON parse failed: no object envelope");
+        return null;
+      }
+
+      function tryParseJsonPartial(text) {
+        if (!text) return null;
+        let t = text.trim();
+        if (t.startsWith("```")) {
+          t = t.replace(/^```(json)?/i, "");
+        }
+        const start = t.indexOf("{");
+        if (start < 0) return null;
+        let depth = 0;
+        let inStr = false;
+        let esc = false;
+        let lastEnd = -1;
+        for (let i = start; i < t.length; i += 1) {
+          const ch = t[i];
+          if (inStr) {
+            if (esc) {
+              esc = false;
+            } else if (ch === "\\") {
+              esc = true;
+            } else if (ch === "\"") {
+              inStr = false;
+            }
+            continue;
+          }
+          if (ch === "\"") {
+            inStr = true;
+            continue;
+          }
+          if (ch === "{") depth += 1;
+          if (ch === "}") {
+            depth -= 1;
+            if (depth === 0) lastEnd = i;
+          }
+        }
+        if (lastEnd < 0) return null;
+        const candidate = t.slice(start, lastEnd + 1);
+        try { return JSON.parse(candidate); } catch (e) {
+          console.debug("[ui] JSON partial parse failed", e);
+          return null;
+        }
+      }
+
+      function renderStructuredAnswer(obj) {
+        if (!obj || !Array.isArray(obj.sections)) return null;
+        const sections = obj.sections;
+
+        const splitquotationAndExplanation = (text) => {
+          if (!text) return null;
+          const t = String(text);
+          const markerRe = /(适用说明|说明|解释|适用要点|适用边界|注意事项|Applicable|Explanation|Analysis|Reasoning)\s*[:：]?/i;
+          const prefixRe = /^(引用条文|条文|引用|quotation|Provision|Article)\s*[:：]\s*/i;
+          let qStart = 0;
+          let startMatch = t.match(prefixRe);
+          if (startMatch) {
+            qStart = startMatch[0].length;
+          } else {
+            const idx = t.search(/(引用条文|条文|引用|quotation|Provision)\s*[:：]/i);
+            if (idx >= 0) {
+              const m = t.slice(idx).match(/(引用条文|条文|引用|quotation|Provision)\s*[:：]\s*/i);
+              qStart = idx + (m ? m[0].length : 0);
+            } else if (!t.startsWith("第")) {
+              return null;
+            }
+          }
+          let qEnd = -1;
+          let rest = "";
+          const markerIdx = t.slice(qStart).search(markerRe);
+          if (markerIdx >= 0) {
+            qEnd = qStart + markerIdx;
+            rest = t.slice(qEnd).trim();
+          } else {
+            const nl = t.indexOf("\n", qStart);
+            if (nl > qStart + 6) {
+              qEnd = nl;
+              rest = t.slice(nl + 1).trim();
+            } else {
+              return null;
+            }
+          }
+          let quotation = t.slice(qStart, qEnd).trim();
+          quotation = quotation.replace(/^[：:\s]+/, "");
+          if (!quotation) return null;
+          rest = rest.replace(/^\s+/, "");
+          return { quotation, rest };
+        };
+
+        const renderItemText = (item) => {
+          if (item == null) return "";
+          if (typeof item === "string" || typeof item === "number") return String(item);
+          if (typeof item === "object") {
+            if ("law_name" in item || "article_no" in item || "summary" in item) {
+              const law = String(item.law_name || "").trim();
+              const art = String(item.article_no || "").trim();
+              const summary = String(item.summary || "").trim();
+              const label = [law, art].filter(Boolean).join(" · ");
+              return summary ? `${label}: ${summary}` : label;
+            }
+            const t = item.text ?? item.content ?? item.value ?? item.title;
+            if (typeof t === "string" || typeof t === "number") return String(t);
+            try { return JSON.stringify(item); } catch (e) { return String(item); }
+          }
+          return String(item);
+        };
+
+        const renderItemHtml = (item) => {
+          if (item && typeof item === "object" && ("quotation" in item || "explanation" in item)) {
+            let quotationText = "";
+            if (item.quotation && typeof item.quotation === "object") {
+              const law = String(item.quotation.law_name || "").trim();
+              const art = String(item.quotation.article_no || "").trim();
+              const content = String(item.quotation.content || "").trim();
+              const contentHasArt = art && content.includes(art);
+              const label = [law, contentHasArt ? "" : art].filter(Boolean).join(" · ");
+              quotationText = content ? (label ? `${label}: ${content}` : content) : label;
+            } else {
+              quotationText = String(item.quotation || "").trim().replace(/\n{2,}/g, "\n");
+            }
+            const explanation = String(item.explanation || "").trim().replace(/\n{2,}/g, "\n").replace(/^\s+/, "");
+            const quotationHtml = quotationText ? `<span class="quotation">${escapeHtml(`“${quotationText}”`)}</span>` : "";
+            if (quotationHtml && explanation) {
+              return `${quotationHtml} ${escapeHtml(explanation).replace(/^\n+/, "")}`;
+            }
+            if (quotationHtml) return quotationHtml;
+            return escapeHtml(explanation).replace(/^\n+/, "");
+          }
+          const raw = String(renderItemText(item)).replace(/\n{2,}/g, "\n");
+          const split = splitquotationAndExplanation(raw);
+          if (!split) return escapeHtml(raw);
+          const quotationText = `“${split.quotation}”`;
+          const quotationHtml = `<span class="quotation">${escapeHtml(quotationText)}</span>`;
+          if (split.rest) {
+            return `${quotationHtml}${escapeHtml(split.rest).replace(/^\s+/, "")}`;
+          }
+          return quotationHtml;
+        };
+
+        const secHtml = sections.map((s) => {
+          const title = escapeHtml(String(s.title || ""));
+          const items = Array.isArray(s.items) ? s.items : (s.items ? [s.items] : []);
+          const listClass = items.length === 1 ? "sec-list single" : "sec-list";
+          const list = items.length
+            ? `<ol class="${listClass}">${items.map((it) => `<li>${renderItemHtml(it)}</li>`).join("")}</ol>`
+            : "";
+          return `<div class="sec"><div class="sec-title">${title}</div>${list}</div>`;
+        }).join("");
+
+        return secHtml;
+      }
+
+      function renderStreamingPlaceholder() {
+        const msg = translations[currentLang]?.generating || "Generating…";
+        return `<div class="sec"><div class="sec-title">${escapeHtml(msg)}</div></div>`;
+      }
+
+
+      function scrollChatToBottom() {
+        chatList.scrollTop = chatList.scrollHeight;
+      }
+
+      function addMessage(role, text) {
+        const el = document.createElement("div");
+        el.className = `msg ${role}`;
+        el.innerHTML = `
+          <div class="bubble">
+            <div class="role">${role === "user" ? "You" : "Assistant"}</div>
+            <div class="content">${escapeHtml(text).replaceAll("\n", "<br/>")}</div>
+          </div>
+        `;
+        chatList.appendChild(el);
+        scrollChatToBottom();
+      }
+
+      function setBusy(on) {
+        state.busy = on;
+        sendBtn.disabled = on;
+        questionInput.disabled = on;
+        sendBtn.textContent = on ? translations[currentLang].thinking : translations[currentLang].send;
+      }
+
+      function getOpenAIKey() {
+        const k = (openaiKeyInput?.value || "").trim();
+        return k || "";
+      }
+
+      function isEvidenceOpen() {
+        return !evidenceBody.classList.contains("collapsed");
+      }
+
+      function setEvidenceOpen(open) {
+        evidenceBody.classList.toggle("collapsed", !open);
+        evidenceToggle.setAttribute("aria-expanded", open ? "true" : "false"); 
+        if (evidenceToggleIcon) evidenceToggleIcon.textContent = open ? "▴" : "▾";
+      }
+
+      function normalizeHits(hits) {
+        if (!Array.isArray(hits)) return [];
+        return hits.map((h, i) => ({
+          rank: Number(h.rank ?? i + 1),
+          score: Number(h.score ?? 0),
+          article: h.article_no ?? h.article ?? h.articleNo ?? "",
+          text: h.text ?? "",
+          law_name: h.law_name ?? "",
+        }));
+      }
+
+      function renderEvidence(hits) {
+        const rows = normalizeHits(hits);
+
+        if (!rows.length) {
+          evidenceHint.style.display = "block";
+          evidenceHint.textContent = translations[currentLang].noCitations;
+          evidenceList.innerHTML = "";
+          return;
+        }
+
+        evidenceHint.style.display = "none";
+        evidenceList.innerHTML = "";
+
+        rows.forEach((h) => {
+          const det = document.createElement("details");
+          det.className = "evi";
+          det.open = false;
+
+          det.addEventListener("toggle", () => {
+            if (!det.open) return;
+            evidenceList.querySelectorAll("details.evi[open]").forEach((d) => {
+              if (d !== det) d.open = false;
+            });
+          });
+
+          const sum = document.createElement("summary");
+          sum.className = "evi-sum";
+          const label = [h.law_name, h.article].filter(Boolean).join(" · ") || "条文";
+          sum.innerHTML = `
+            <span class="evi-left">[${escapeHtml(h.rank)}] ${escapeHtml(label)}</span>
+          `;
+
+          const body = document.createElement("div");
+          body.className = "evi-body";
+          body.innerHTML = `<div class="evi-text">${escapeHtml(h.text).replaceAll("\n", "<br/>")}</div>`;
+
+          det.appendChild(sum);
+          det.appendChild(body);
+          evidenceList.appendChild(det);
+        });
+      }
+
+      function updatePdfHintVisibility() {
+        const f = pdfFile?.files?.[0];
+        if (!f) {
+          pdfHint.style.display = "none";
+          return;
+        }
+        pdfHint.style.display = (f.size > MAX_BYTES) ? "inline-flex" : "none";
+      }
+
+      function resetConversation() {
+        chatList.innerHTML = "";
+        state.hasAsked = false;
+
+        evidenceList.innerHTML = "";
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = translations[currentLang].askHint;
+
+        setEvidenceOpen(false);
+      }
+
+      async function uploadPdfFile(file) {
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+
+        const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+        return res.json();
+      }
+
+      async function pollIngestStatus(docId, { intervalMs = 1500, maxTries = 120 } = {}) {
+        for (let i = 0; i < maxTries; i++) {
+          const res = await fetch(`/ingest/status/${encodeURIComponent(docId)}`, { method: "GET" });
+          if (res.ok) {
+            const st = await res.json();
+            if (st?.error && st.error !== null && st.error !== "not_found") return st;
+
+            const faissDone = st?.faiss === "done";
+            const bm25Done = st?.bm25 === "done";
+            if (faissDone && bm25Done) return st;
+
+            uploadStatus.textContent = `Indexing...\n`;
+          }
+          await new Promise((r) => setTimeout(r, intervalMs));
+        }
+        return { error: "timeout" };
+      }
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function fetchWithWarmupRetry(
+        url,
+        options,
+        { maxWaitMs = 300000, delayMs = 1000 } = {}
+      ) {
+        const start = Date.now();
+        while (true) {
+          const res = await fetch(url, options);
+          if (res.ok || res.status !== 503) return res;
+          await res.text().catch(() => "");
+          if (Date.now() - start > maxWaitMs) return res;
+          await sleep(delayMs);
+        }
+      }
+
+      async function callAnswer(retrieval_id, opts = {}) {
+        const payload = { retrieval_id, stream: true };
+        let tokenCount = 0;
+        const headers = { "Content-Type": "application/json", "Accept": "text/event-stream" };
+        let k = "";
+        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+        if (!k) k = getOpenAIKey();
+        if (k) headers["X-OpenAI-Api-Key"] = k;
+
+        const res = await fetchWithWarmupRetry("/rag/answer", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+
+        const onToken = typeof opts.onToken === "function" ? opts.onToken : null;
+        const onSection = typeof opts.onSection === "function" ? opts.onSection : null;
+        const onItem = typeof opts.onItem === "function" ? opts.onItem : null;
+        const onSentence = typeof opts.onSentence === "function" ? opts.onSentence : null;
+        const onError = typeof opts.onError === "function" ? opts.onError : null;
+        const onDone = typeof opts.onDone === "function" ? opts.onDone : null;
+
+        // SSE parse
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buf = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+
+            let eventType = "message";
+            const dataLines = [];
+
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("event:")) eventType = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+              // comment/heartbeat lines start with ":" -> ignore
+            }
+
+            const dataStr = dataLines.join("\n");
+            let dataObj = null;
+            try { dataObj = JSON.parse(dataStr); } catch (e) {}
+
+            if (eventType === "token") {
+              const t = dataObj && typeof dataObj.text === "string" ? dataObj.text : dataStr;
+              tokenCount += 1;
+              // if (dataObj && dataObj.dt != null && tokenCount % 50 === 0) {
+              //   console.log("dt", dataObj.dt, "tokens", tokenCount);
+              // }
+              if (t && onToken) onToken(t);
+
+            } else if (eventType === "section") {
+              if (onSection) onSection(dataObj);
+            } else if (eventType === "item") {
+              if (onItem) onItem(dataObj);
+            } else if (eventType === "sentence") {
+              if (onSentence) onSentence(dataObj);
+
+            } else if (eventType === "error") {
+              const payload = dataObj || { kind: "server_error", message: dataStr };
+              if (onError) onError(payload);
+              return;
+            } else if (eventType === "done") {
+              const payload = dataObj || { ok: true };
+              if (onDone) onDone(payload);
+              return;
+            }
+          }
+        }
+        if (onDone) onDone({ ok: true });
+      }
+
+      async function callRetrieve(question) {
+        const payload = { question, top_k: 10 };
+
+        const headers = { "Content-Type": "application/json" };
+        let k = "";
+        try { k = (sessionStorage.getItem(KEY_STORAGE) || "").trim(); } catch (e) {}
+        if (!k) k = getOpenAIKey();
+        if (k) headers["X-OpenAI-Api-Key"] = k;
+
+        const res = await fetchWithWarmupRetry("/rag/retrieve", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
+        }
+        return res.json();
+      }
+
+      // -------- Events --------
+      evidenceToggle.addEventListener("click", () => {
+        setEvidenceOpen(!isEvidenceOpen());
+      });
+
+      saveKeyBtn?.addEventListener("click", () => {
+        const k = getOpenAIKey();
+        if (!k) return alert("Please paste your OpenAI API key first.");
+        try { sessionStorage.setItem(KEY_STORAGE, k); } catch (e) {}
+        alert("Saved for this browser session.");
+      });
+
+      clearKeyBtn?.addEventListener("click", () => {
+        if (openaiKeyInput) openaiKeyInput.value = "";
+        try { sessionStorage.removeItem(KEY_STORAGE); } catch (e) {}
+        alert("Cleared.");
+      });
+
+      uploadBtn?.addEventListener("click", async () => {
+        const file = pdfFile?.files?.[0];
+        if (!file) {
+          uploadStatus.textContent = translations[currentLang].uploadNoFile;
+          fileNameDisplay.textContent = translations[currentLang].noFileChosen;
+          return;
+        }
+        if (!/\.pdf$/i.test(file.name)) {
+          uploadStatus.textContent = translations[currentLang].uploadPdfOnly;
+          return;
+        }
+
+        uploadBtn.disabled = true;
+        clearUploadBtn.disabled = true;
+        uploadStatus.textContent =  `${translations[currentLang].uploading} ${file.name} ...`;
+
+        try {
+          const data = await uploadPdfFile(file);
+          uploadStatus.textContent =
+            `${translations[currentLang].uploaded}: ${data.filename}\n` +
+            `${translations[currentLang].docId}: ${data.doc_id}\n` +
+            `${translations[currentLang].chunks}: ${data.num_chunks}\n\n` +
+            `${translations[currentLang].preview}:\n${data.text_preview || ""}\n\n` +
+            `${translations[currentLang].indexingScheduled}`;
+
+          const st = await pollIngestStatus(data.doc_id);
+          if (st?.error && st.error !== null && st.error !== "not_found") {
+            uploadStatus.textContent += `\n\n${translations[currentLang].indexError}: ${st.error}`;
+          } else if (st?.faiss === "done" || st?.bm25 === "done") {
+            uploadStatus.textContent =
+             `${translations[currentLang].indexReady}\n`;
+          } else if (st?.error === "timeout") {
+            uploadStatus.textContent += `\n\n${translations[currentLang].indexingInProcess}`;
+          }
+        } catch (err) {
+          uploadStatus.textContent =  `${translations[currentLang].uploadFailed}: ${err?.message || String(err)}`;
+        } finally {
+          uploadBtn.disabled = false;
+          clearUploadBtn.disabled = false;
+          if (pdfFile) pdfFile.value = "";
+        }
+      });
+
+      clearUploadBtn?.addEventListener("click", () => {
+        if (pdfFile) pdfFile.value = "";  // 清空文件选择框
+        if (fileNameDisplay) fileNameDisplay.textContent = ""; // 清空文件名显示
+        uploadStatus.textContent = "";   // 清空上传状态文本
+      });
+
+      // 文件选择后更新显示文字
+      pdfFile.addEventListener('change', () => {
+        if (pdfFile.files.length > 0) {
+          fileNameDisplay.textContent = pdfFile.files[0].name;
+        }  
+        updatePdfHintVisibility();
+      });
+
+      questionInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          chatForm.requestSubmit();
+        }
+      });
+
+      clearBtn.addEventListener("click", () => {
+        questionInput.value = "";
+        questionInput.focus();
+      });
+
+      newChatBtn.addEventListener("click", () => {
+        resetConversation();
+      });
+
+      // 提交问题 
+      chatForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (state.busy) return;
+
+        const q = (questionInput.value || "").trim();
+        if (!q) return;
+
+        // 提交问题后立即隐藏 "Ask a question to see citations"
+        evidenceHint.style.display = "none"; 
+
+        // 设置展开/收起按钮
+        setEvidenceOpen(true);
+        evidenceList.innerHTML = "";
+
+        addMessage("user", q);
+        questionInput.value = "";
+
+        // 显示正在搜索提示
+        evidenceHint.style.display = "block";
+        evidenceHint.textContent = translations[currentLang].searching;  // 显示正在搜索的提示
+
+        setBusy(true);
+        try {
+          const r = await callRetrieve(q);  // 发起检索请求
+          renderEvidence(r.hits ?? []);  // 渲染检索结果
+
+          // 如果检索结果有内容，显示生成答案提示
+          evidenceHint.style.display = "block";
+          evidenceHint.textContent = translations[currentLang].generating;  // 显示正在生成答案的提示
+
+          // Streaming answer: create assistant bubble first, then append incrementally
+          const contentEl = addAssistantPlaceholder();
+          let acc = "";
+          let lastStructured = "";
+          let hasStructured = false;
+          let sections = [];
+          let sentenceBuckets = {};
+
+          await callAnswer(r.retrieval_id, {
+            onToken: (t) => {
+              acc += t;
+              const parsed = tryParseJsonPartial(acc);
+              const structuredHtml = renderStructuredAnswer(parsed);
+              if (structuredHtml) {
+                lastStructured = structuredHtml;
+                hasStructured = true;
+                setBubbleContentHtml(contentEl, structuredHtml);
+              } else if (hasStructured) {
+                setBubbleContentHtml(contentEl, lastStructured);
+              } else {
+                setBubbleContentHtml(contentEl, renderStreamingPlaceholder());
+              }
+              scrollChatToBottom();
+            },
+            onSection: (payload) => {
+              if (payload && payload.section) {
+                const idx = Number(payload.index);
+                if (!Number.isNaN(idx) && idx >= 0) {
+                  sections[idx] = payload.section;
+                  const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+                  if (html) {
+                    setBubbleContentHtml(contentEl, html);
+                    hasStructured = true;
+                    lastStructured = html;
+                  }
+                }
+              }
+            },
+            onItem: (payload) => {
+              if (!payload) return;
+              const sIdx = Number(payload.section_index);
+              const iIdx = Number(payload.item_index);
+              if (Number.isNaN(sIdx) || sIdx < 0 || Number.isNaN(iIdx) || iIdx < 0) return;
+              const item = payload.item;
+              if (!sections[sIdx]) {
+                sections[sIdx] = { title: "", items: [] };
+              }
+              if (!Array.isArray(sections[sIdx].items)) {
+                sections[sIdx].items = [];
+              }
+              sections[sIdx].items[iIdx] = item;
+              const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+              if (html) {
+                setBubbleContentHtml(contentEl, html);
+                hasStructured = true;
+                lastStructured = html;
+              }
+            },
+            onSentence: (payload) => {
+              if (!payload) return;
+              const sIdx = Number(payload.section_index);
+              const iIdx = Number(payload.item_index);
+              const tIdx = Number(payload.sentence_index);
+              if (Number.isNaN(sIdx) || sIdx < 0 || Number.isNaN(iIdx) || iIdx < 0 || Number.isNaN(tIdx) || tIdx < 0) return;
+              const sentence = payload.sentence || "";
+              const key = `${sIdx}:${iIdx}`;
+              if (!sentenceBuckets[key]) sentenceBuckets[key] = [];
+              sentenceBuckets[key][tIdx] = sentence;
+              if (!sections[sIdx]) sections[sIdx] = { title: "", items: [] };
+              if (!Array.isArray(sections[sIdx].items)) sections[sIdx].items = [];
+              const merged = sentenceBuckets[key].filter(Boolean).join("");
+              sections[sIdx].items[iIdx] = merged;
+              const html = renderStructuredAnswer({ sections: sections.filter(Boolean) });
+              if (html) {
+                setBubbleContentHtml(contentEl, html);
+                hasStructured = true;
+                lastStructured = html;
+              }
+            },
+            onError: (e) => {
+              const kind = e && e.kind ? String(e.kind) : "server_error";
+              if (kind === "rate_limit") {
+                const msg = (e && e.message) ? e.message : "触发限流，请稍后重试。";
+                const title = (e && e.title) ? e.title : "请求被限流";
+                setBubbleContentText(contentEl, `${title}\n\n${msg}`);
+              } else {
+                const msg = (e && e.message) ? e.message : JSON.stringify(e);
+                setBubbleContentText(contentEl, `请求失败：${msg}`);
+              }
+              evidenceHint.style.display = "none";
+            },
+            onDone: () => {
+              const finalText = (acc || "").trim();
+              const parsed = tryParseJson(finalText) || tryParseJsonPartial(finalText);
+              const structuredHtml = renderStructuredAnswer(parsed);
+              if (structuredHtml) {
+                setBubbleContentHtml(contentEl, structuredHtml);
+              } else {
+                setBubbleContentText(contentEl, finalText || "（未返回答案）");
+              }
+              evidenceHint.style.display = "none";
+              state.hasAsked = true;
+            }
+          });
+
+          // 完成生成，隐藏检索提示
+          evidenceHint.style.display = "none";  
+
+          state.hasAsked = true;
+        } catch (err) {
+          addMessage("assistant", `请求失败：${err?.message || String(err)}`);
+          evidenceHint.style.display = "none";  // 隐藏提示
+        } finally {
+          setBusy(false);
+          questionInput.focus();
+        }
+      });
+
+      // Init
+      applyLanguage(currentLang);
+      resetConversation();
+    </script>
+  </body>
+</html>
