@@ -601,6 +601,7 @@
             <div class="muted" id="apiKeyHint" style="line-height:1.4;">
               <!-- 内容由 JS 动态填充 -->
             </div>
+            <div class="muted" id="gpuHint" style="line-height:1.4; margin-top:6px;"></div>
           </div>
         </div>
       </aside>
@@ -610,7 +611,7 @@
       // ==================== 多语言支持 ====================
       const translations = {
         en: {
-          subtitle: "Trustworthy legal guidance backed by verifiable legal sources",
+          subtitle: "Trustworthy legal assistant grounded in verifiable sources",
           newChat: "New chat",
           send: "Send",
           clear: "Clear",
@@ -647,7 +648,9 @@
           apiKeyLabel: "OpenAI API Key",
           saveKey: "Save",
           clearKey: "Clear",
-          apiKeyHint: "Please provide your OpenAI key to enable answers.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session."
+          apiKeyHintOptional: "OpenAI API key is optional.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session.",
+          apiKeyHintRequired: "No GPU accelerator detected. Please provide your OpenAI key to enable answers.\nGet a key from <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a>.\nThe key is stored only in your browser session.",
+          cpuOnly: ""
         },
         zh: {
           subtitle: "基于可核查法律来源的法律助手",
@@ -687,7 +690,9 @@
           apiKeyLabel: "OpenAI API Key",
           saveKey: "保存",
           clearKey: "清除",
-          apiKeyHint: "需提供 OpenAI API Key 才能正常回答。\n请从 <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a> 获取密钥。\n密钥仅保存在您当前浏览器会话中，不会上传。"
+          apiKeyHintOptional: "（可选）默认使用 Qwen 大模型，如需切换成 OpenAI model，\n请从 <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a> 获取密钥。\n密钥仅保存在您当前浏览器会话中，不会上传。",
+          apiKeyHintRequired: "未检测到 GPU，请提供 OpenAI API Key 以启用回答。\n请从 <a href='https://platform.openai.com/api-keys' target='_blank' rel='noopener noreferrer' class='no-link'>platform.openai.com/api-keys</a> 获取密钥。\n密钥仅保存在您当前浏览器会话中，不会上传。",
+          cpuOnly: ""
         }
       };
 
@@ -730,7 +735,9 @@
           } 
 
           // OpenAI API Key 说明文字
-          apiKeyHint.innerHTML = translations[lang].apiKeyHint.replace(/\n/g, '<br />');
+          const hintKey = hasGpu === false ? "apiKeyHintRequired" : "apiKeyHintOptional";
+          apiKeyHint.innerHTML = translations[lang][hintKey].replace(/\n/g, '<br />');
+          updateGpuHint(lang);
 
       }
 
@@ -758,6 +765,29 @@
       const evidenceHint = $("#evidenceHint");
       const evidenceBody = $("#evidenceBody");
       const evidenceList = $("#evidenceList");
+      const gpuHint = $("#gpuHint");
+
+      let hasGpu = null;
+
+      function updateGpuHint(lang = currentLang) {
+        if (!gpuHint) return;
+        if (hasGpu === false) {
+          gpuHint.textContent = translations[lang].cpuOnly;
+        } else {
+          gpuHint.textContent = "";
+        }
+      }
+
+      async function checkGpuStatus() {
+        try {
+          const res = await fetch("/ready");
+          if (!res.ok) return;
+          const data = await res.json();
+          hasGpu = Boolean(data && data.has_gpu);
+          updateGpuHint();
+          applyLanguage(currentLang);
+        } catch (e) {}
+      }
 
       const uploadBtn = $("#uploadBtn");
       const clearUploadBtn = $("#clearUploadBtn");
@@ -1522,6 +1552,7 @@
 
       // Init
       applyLanguage(currentLang);
+      checkGpuStatus();
       resetConversation();
     </script>
   </body>
