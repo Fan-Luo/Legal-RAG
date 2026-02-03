@@ -71,3 +71,7 @@ details.code-fold .sourceCode,
 .cell-output {
   margin-left: 1em;
 }
+
+.github-video {
+  display: none;
+}

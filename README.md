@@ -6,51 +6,43 @@ colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: true
+author: Fan Luo 
 ---
 
-# Legal-RAG
-
-
 [![HuggingFace Spaces](https://img.shields.io/badge/Space-Legal--RAG-blue?logo=huggingface)](https://huggingface.co/spaces/flora-l/Legal-RAG)
-[![Kaggle Notebook](https://img.shields.io/badge/Kaggle-Notebook-blue)]
+[![Kaggle Notebook](https://img.shields.io/badge/Kaggle-Notebook-blue)](https://www.kaggle.com/code/fanlcs/retrieval-performance-evaluation)
+[![Colab Notebook](https://img.shields.io/badge/Run-Colab-blue?logo=googlecolab)](https://colab.research.google.com/drive/1TRp4d_VwlcSY8f78psuCNX_90WA3g6qS?usp=sharing)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
  
 
 ## What is Legal-RAG?
-Legal-RAG is an open-source, end-to-end legal Retrieval-Augmented Generation (RAG) system designed around the Contract Law.
+[Legal-RAG](https://fan-luo.github.io/Legal-RAG/) is an open-source, end-to-end legal Retrieval-Augmented Generation (RAG) system centered on statutory text. It integrates QueryType-aware routing, hybrid retrieval, bounded graph-augmented context expansion, and provider-agnostic generation. Running OpenAI models with an OPENAI_API_KEY as the generation model is optional; you can deploy with GPU to enable local models (default: Qwen), and other open-source models are configurable.
 
-It demonstrates how to build a law-aware RAG system that is:
-- grounded in explicit statutory text
-- engineered with retrieval transparency
-- structured for future extensibility  
+<video src="docs/project.mp4" width="720" height="480" controls muted style="display: block; margin: 0 auto 50px auto;"></video>
 
 
-## 🤗 Hugging Face Spaces Demo (Online)
+## Online Demo  
 
-This project provides a fully functional online demo deployed on Hugging Face Spaces.
-### Live Demo
-👉 https://huggingface.co/spaces/flora-l/Legal-RAG 
+- Option 1 — Hosted Demo: [Hugging Face Spaces](https://huggingface.co/spaces/flora-l/Legal-RAG) (no GPU, slower, requires OpenAI key)
+- Option 2 — Self‑Launch Demo: [Colab notebook](https://colab.research.google.com/drive/1bDlIFzHvnlR-U3lWVGLJAGq3KwcpvlxG?usp=sharing) (launch the server on GPU, no OpenAI key required)
 
-Please follow the on-page instructions to enter your own OPENAI_API_KEY (required):
-- Obtain your API key from the official OpenAI dashboard: https://platform.openai.com/api-keys
-- Your API key is stored only in the current browser session (sessionStorage)
-- The key is never uploaded to or stored on the server
-- You may revoke the key at any time from your OpenAI account after use
 
-<small>Note: This Space does not currently have GPU resources enabled, so local Qwen models are unavailable.</small>
+<a class="github-video">https://github.com/user-attachments/assets/1a380d62-d909-480a-8618-a03f3015e1bd</a>
 
 
 ## Features
 
-### Law-aware RAG 
+### Law-aware RAG
 - Explicit article-level chunking
 - Law-specific metadata (chapter / section / article number)
 - Retrieval results are inspectable and auditable
+- Language-aware corpus routing (zh/en)
 
-### Hybrid Retrieval 
+### Hybrid Retrieval
 - Dense retrieval: FAISS
 - Sparse retrieval: BM25
-- Weighted fusion  
+- ColBERT (late interaction)
+- Weighted fusion
 
 ### Query Routing & Graph Awareness
 - Lightweight law_graph for structural reasoning
@@ -63,13 +55,6 @@ Please follow the on-page instructions to enter your own OPENAI_API_KEY (require
 - Upload PDFs → parse → chunk → JSONL
 - Incremental FAISS add
 - BM25 rebuild in background
-
-### Engineering-first Design
-- Clear module boundaries
-- Deterministic data flow
-- Minimal magic, maximal readability
-- SaaS-compatible architecture 
-
  
 
 ## System Architecture
@@ -100,7 +85,15 @@ cd Legal-RAG
 pip install -r requirements.txt
 ````
 
-### 2.Prepare law data & build index
+### 2. Prepare law data & build index
+
+The default corpus includes:
+
+- Chinese: PRC Civil Code
+- English: Uniform Commercial Code (UCC)
+
+Queries are routed to language-specific corpora and indexes.
+
 ```bash
 # preprocess law text into structured JSONL
 python -m scripts.preprocess_law
@@ -111,6 +104,12 @@ python -m scripts.build_index
 # build law_graph
 python -m scripts.build_graph
 ````
+Artifacts are generated per language:
+
+- `data/processed/law_zh.jsonl`, `data/processed/law_en.jsonl`
+- `data/index/zh/...`, `data/index/en/...`
+- `data/graph/law_graph_zh.jsonl`, `data/graph/law_graph_en.jsonl`
+
 ### 3. Start API service
 ```bash
 python -m uvicorn legalrag.api.server:app --host 127.0.0.1 --port 8000 
@@ -129,44 +128,23 @@ from legalrag.pipeline.rag_pipeline import RagPipeline
 cfg = AppConfig.load()
 pipeline = RagPipeline(cfg)
 
-question = "合同生效后，如果对价款和履行地点没有约定，应当如何处理？"
+question = "What standards must goods satisfy to be merchantable？"
 ans = pipeline.answer(question)
 
 print(ans.answer)
-```
-
-> 1. 结论：
->   - 经过全面分析与理解，我们认为，当合同对价款和履行地点没有约定时，合同生效后，当事人可以根据合同相关条款或者交易习惯确定支付价款和履行地点。这体现了合同自由的原则和诚实信用的基本精神。
->   
-> 2. 分析与理由：
->   - 我们首先确认了《民法典·合同编》第五百一十条中明确规定的合同生效后当事人的支付地点选择权：
->     - 在没有具体约定的情况下，应由双方协商确定或依据合同惯例；
->     - 如协商不成，可依合同相关条款或交易习惯确定。
->     
->   - 对于履行地点的选择，我们援引了第六百二十七条中的相关规定，强调了在合同签订时就已经明确了合同履行地点。尽管如此，这一条款并不足以涵盖所有可能的情况，因此我们还需要考虑合同的实际履行情况来进一步判断。
->
-> 3. 参考条文列表：
->   - （核心依据）
->       - 第五百一十条
->   - （次要参考）
->       - 第六百二十七条
-
- 
-
+``` 
 
 ## LLM Backends & Cost Model
 Supported backends:
+
 - Local LLM (Qwen series, need GPU and enough memory)
 - OpenAI-compatible API (need to provide OpenAI API key)
-
-Important design choice
-
-- No API key is collected via UI
-- LLM keys are read only from environment variables
-- If no key is provided and no local model loaded, the system gracefully degrades
+  - No API key is collected via UI
+  - LLM keys are read only from environment variables
+Note: If no key is provided and no local model loaded, the system gracefully degrades
 
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 Legal-RAG/
@@ -177,20 +155,28 @@ Legal-RAG/
 │   ├── schemas.py                 # LawChunk / RetrievalHit / RoutingDecision / RagAnswer
 │   ├── llm/
 │   │   ├── __init__.py
-│   │   └── client.py              # Qwen / OpenAI LLMClient（async-safe）
-│   │
-│   ├── retrieval/
-│   │   ├── __init__.py
-│   │   ├── vector_store.py        # Dense (BGE + FAISS)
-│   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)
-│   │   ├── hybrid_retriever.py    # Dense + Sparse  
-│   │   ├── corpus_loader.py       # read all chunks from processed_dir
-│   │   ├── incremental_indexer.py
-│   │   └── graph_store.py         # law_graph / legal_kg  
+│   │   ├── gateway.py
+│   │   └── client.py              # Qwen / OpenAI LLMClient 
 │   │
 │   ├── routing/
 │   │   ├── __init__.py
+│   │   ├── legal_issue_extractor.py
 │   │   └── router.py              # QueryType + Graph/RAG Suggestions
+│   │
+│   ├── retrieval/
+│   │   ├── __init__.py
+│   │   ├── builders
+│   │   ├── dense_retriever.py     # Dense (BGE + FAISS)
+│   │   ├── vector_store.py        
+│   │   ├── bm25_retriever.py      # Sparse (BM25 + jieba)
+│   │   ├── colbert_retriever.py
+│   │   ├── hybrid_retriever.py    # Dense + Sparse + Colbert + Graph + Rerank
+│   │   ├── by_lang_retriever.py   # zh/en routing
+│   │   ├── corpus_loader.py       # read all chunks from processed_dir
+│   │   ├── incremental_indexer.py
+│   │   ├── graph_retriever.py
+│   │   ├── graph_store.py         # law_graph / legal_kg  
+│   │   └── rerankers.py
 │   │
 │   ├── pdf/
 │   │   ├── __init__.py
@@ -198,6 +184,9 @@ Legal-RAG/
 │   │
 │   ├── ingest/
 │   │   ├── __init__.py
+│   │   ├── orchestrator.py
+│   │   ├── service.py
+│   │   ├── task_queue.py
 │   │   └── ingestor.py            # PDFIngestor 
 │   │
 │   ├── pipeline/
@@ -205,49 +194,60 @@ Legal-RAG/
 │   │   └── rag_pipeline.py        # Graph-aware RAG Core Inference
 │   │
 │   ├── prompts/
-│   │   └── legal_rag_prompt.txt   # Prompt 
+│   │   ├── prompt_zh.json         # Chinese prompt
+│   │   └── prompt_en.json         # English prompt
 │   │
 │   ├── utils/
 │   │   ├── __init__.py
+│   │   ├── lang.py
 │   │   ├── logger.py             
 │   │   └── text.py                
 │   │
 │   └── api/
 │       ├── __init__.py
-│       └── server.py              # FastAPI（/rag/query, /, ingest/pdf）
+│       └── server.py              # FastAPI（/rag/retrieve, /rag/answer, /ingest/pdf）
 │
 ├── ui/
-│   └── index.html
+│   ├── index.html
+│   └── demo.qmd
 │
 ├── scripts/
 │   ├── preprocess_law.py          # parse law → LawChunk JSONL
-│   ├── build_index.py             # FAISS + BM25 indexes
+│   ├── build_index.py             # FAISS + BM25 + Colbert indexes
 │   ├── build_graph.py             # law_graph / legal_kg  
+│   ├── bgenerate_synthetic_data.py
 │   └── evaluate_retrieval.py      # Hit@K / MRR / nDCG
 │
 ├── notebooks/
-│   ├── 01_kaggle_build_index_and_eval.ipynb
-│   ├── 02_colab_qwen_rag_demo.ipynb
-│   ├── 03_retrieval_visualization.ipynb
-│   ├── 04_retrieval_benchmark_legal.ipynb
-│   └── 05_rag_answer_eval.ipynb
+│   ├── 01_Launch_the_UI.ipynb
+│   ├── 02_LegalRAG_Pipeline.ipynb
+│   ├── 03_Retrieval_Performance_Evaluation.ipynb
+│   └── 04_Law_Graph_Visualization.ipynb
 │
 ├── data/
 │   ├── raw/                         
-│   │   └── minfadian.txt            
+│   │   ├── minfadian.txt            
+│   │   └── ucc/                    
+│   ├── processed/                 # law_zh.jsonl / law_en.jsonl
+│   ├── index/                     # faiss/bm25/colbert per language
+│   └── graph/                     # law_graph_zh.jsonl / law_graph_en.jsonl
 │   └── eval/
-│       └── contract_law_qa.jsonl
+│       
 ├── docs/
 │   ├── architecture.mmd
 │   └── architecture.png
+│ 
 ├── tests/
 │   ├── test_router.py
 │   └── test_retrieval.py
+│ 
 ├── README.md
 ├── README-zh.md
 ├── LICENSE
 ├── pyproject.toml
 ├── requirements.txt
+├── _quarto.yml
+├── index.qmd
 ├── app.py                           # Hugging Face Space entry
 ├── Dockerfile
 └── .gitignore                       
@@ -257,6 +257,7 @@ Legal-RAG/
 
 ## Who is this project for?
 This repository is intended for:
+
 - Engineers exploring RAG system design
 - Researchers working on legal NLP / AI + law
 - Practitioners interested in traceable AI systems
