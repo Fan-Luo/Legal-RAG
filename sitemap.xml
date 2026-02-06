@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/README-zh.html</loc>
+    <lastmod>2026-02-06T10:31:41.649Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/notebooks/02_LegalRAG_Pipeline.html</loc>
+    <lastmod>2026-02-03T11:51:08.531Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/notebooks/03_Retrieval_Performance_Evaluation.html</loc>
+    <lastmod>2026-02-03T11:51:08.459Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/docs/demo.html</loc>
+    <lastmod>2026-02-03T11:51:08.451Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/index.html</loc>
+    <lastmod>2026-02-06T10:26:09.114Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/notebooks/04_Law_Graph_Visualization.html</loc>
+    <lastmod>2026-02-03T11:51:08.459Z</lastmod>
+  </url>
+  <url>
+    <loc>https://Fan-Luo.github.io/Legal-RAG/notebooks/01_Launch_the_UI.html</loc>
+    <lastmod>2026-02-03T11:51:08.530Z</lastmod>
+  </url>
+</urlset>
